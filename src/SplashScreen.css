@@ -1,0 +1,57 @@
+.karta-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--karta-bg, linear-gradient(180deg, #1f5f26 0%, #062211 100%));
+  color: #ffffff;
+}
+
+.karta-splash__center {
+  width: min(72vw, 260px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 26px;
+}
+
+.karta-splash__logo {
+  width: min(54vw, 210px);
+  aspect-ratio: 1;
+  object-fit: contain;
+  filter: drop-shadow(0 20px 32px rgba(0, 0, 0, 0.36));
+}
+
+.karta-splash__bar {
+  width: min(58vw, 230px);
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 10px 26px rgba(0, 0, 0, 0.26);
+}
+
+.karta-splash__bar-fill {
+  width: 42%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #f8d64e, #f1c40f, #fff17a);
+  animation: karta-splash-load 1.1s ease-in-out infinite;
+}
+
+@keyframes karta-splash-load {
+  0% {
+    transform: translateX(-110%);
+  }
+  55% {
+    transform: translateX(95%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}

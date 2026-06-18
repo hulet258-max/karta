@@ -1,0 +1,54 @@
+.confirmation-details {
+    background: rgba(0, 0, 0, 0.2);
+    padding: 15px;
+    border-radius: 10px;
+    margin-bottom: 20px;
+    color: #e0e0e0;
+}
+
+.confirmation-details p {
+    margin: 8px 0;
+    font-size: 16px;
+}
+
+.note {
+    font-size: 13px !important;
+    color: #aaa;
+    margin-top: 15px !important;
+    font-style: italic;
+}
+
+.error-text {
+    color: #ff4d4d;
+    font-weight: bold;
+    margin-top: 10px !important;
+}
+
+.cancel-btn {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.24);
+    color: #fff;
+    padding: 12px 20px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-weight: bold;
+    box-shadow: 0 12px 24px rgba(0,0,0,0.24), inset 0 1px 0 rgba(255,255,255,0.22);
+}
+
+.confirm-btn {
+    background: linear-gradient(180deg, #fff982, #fff65e);
+    color: #061208;
+    border: 1px solid rgba(255,255,255,0.48);
+    padding: 12px 20px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-weight: bold;
+    box-shadow: 0 14px 28px rgba(0,0,0,0.28), 0 0 22px rgba(255,246,94,0.16), inset 0 1px 0 rgba(255,255,255,0.62);
+}
+
+.confirm-btn:disabled {
+    background: rgba(255,255,255,0.1);
+    color: #888;
+    cursor: not-allowed;
+    box-shadow: none;
+}

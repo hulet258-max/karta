@@ -1,0 +1,251 @@
+body{
+  margin:0;
+  font-family:Segoe UI, sans-serif;
+}
+
+.main-container{
+
+  min-height:100vh;
+
+  background:var(--karta-bg);
+  background-size:auto, 42px 42px, 42px 42px, auto;
+
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+
+  padding:20px;
+
+  color:white;
+
+}
+
+
+/* SETTINGS */
+
+.settings-btn{
+
+  position:absolute;
+  top:15px;
+  left:15px;
+
+  font-size:24px;
+
+  background:rgba(255,255,255,0.08);
+  color:#fff65e;
+
+  width:40px;
+  height:40px;
+
+  border-radius:10px;
+  border:1px solid rgba(255,255,255,0.28);
+  backdrop-filter:blur(14px);
+  box-shadow:0 12px 24px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.28);
+
+  display:flex;
+  align-items:center;
+  justify-content:center;
+
+}
+
+
+
+/* LOGO */
+
+.logo-circle{
+
+  margin-top:50px;
+
+  width:180px;
+  height:180px;
+
+  border-radius:50%;
+
+  background:white;
+
+  display:flex;
+  align-items:center;
+  justify-content:center;
+
+  box-shadow:0 0 25px rgba(0,255,140,0.7);
+
+}
+
+.logo-circle img{
+
+  width:110px;
+
+}
+
+
+
+/* WALLET CARD */
+
+.wallet-card{
+
+  margin-top:35px;
+
+  width:100%;
+  max-width:420px;
+
+  background:white;
+
+  border-radius:20px;
+
+  padding:20px;
+
+  color:#0f4d2c;
+
+  box-shadow:0 5px 20px rgba(0,0,0,0.15);
+
+}
+
+
+/* USER INFO */
+
+.user-section{
+
+  display:flex;
+  align-items:center;
+
+  gap:12px;
+
+  margin-bottom:15px;
+
+}
+
+.user-avatar{
+
+  width:50px;
+  height:50px;
+
+  border-radius:50%;
+
+  border:2px solid #0f4d2c;
+
+}
+
+.user-text h3{
+
+  margin:0;
+  font-size:16px;
+
+}
+
+.user-text p{
+
+  margin:0;
+  font-size:13px;
+  color:#6a6a6a;
+
+}
+
+
+
+/* BALANCE */
+
+.balance-row{
+
+  text-align:center;
+
+  margin-bottom:18px;
+
+}
+
+.balance-row span{
+
+  font-size:14px;
+  color:#6a6a6a;
+
+}
+
+.balance-row h2{
+
+  margin:6px 0;
+
+}
+
+
+
+/* ACTIONS */
+
+.wallet-actions{
+
+  display:grid;
+
+  grid-template-columns:repeat(3,1fr);
+
+  gap:10px;
+
+}
+
+.wallet-actions button{
+
+  border:1px solid rgba(255,255,255,0.24);
+
+  padding:11px 12px;
+
+  border-radius:10px;
+
+  background:rgba(255,255,255,0.07);
+
+  color:white;
+
+  font-weight:600;
+  box-shadow:0 12px 24px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.22);
+
+}
+
+
+
+/* PLAY */
+
+.play-btn{
+
+  margin-top:40px;
+
+  width:100%;
+  max-width:420px;
+
+  padding:18px;
+
+  border:1px solid rgba(255,255,255,0.48);
+
+  border-radius:10px;
+
+  font-size:20px;
+
+  font-weight:bold;
+
+  background:
+  #fff65e;
+
+  color:#061208;
+
+  cursor:pointer;
+
+  box-shadow:
+  0 14px 28px rgba(0,0,0,0.28), 0 0 22px rgba(255,246,94,0.16), inset 0 1px 0 rgba(255,255,255,0.62);
+
+}
+
+.play-btn:hover{
+
+  transform:translateY(-1px);
+
+}
+
+
+
+/* MOBILE */
+
+@media (max-width:420px){
+
+.logo-circle{
+
+  width:160px;
+  height:160px;
+
+}
+
+}

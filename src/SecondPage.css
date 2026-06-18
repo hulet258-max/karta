@@ -1,0 +1,299 @@
+/* MAIN CONTAINER */
+
+.second-page-container {
+  min-height: 100vh;
+  background: var(--karta-bg);
+  background-size: auto, 42px 42px, 42px 42px, auto;
+  color: white;
+  font-family: "Segoe UI", sans-serif;
+}
+
+
+/* HEADER */
+
+.dashboard-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+
+  padding: 14px 16px;
+
+  position: sticky;
+  top: 0;
+
+  background: rgba(0,0,0,0.3);
+  backdrop-filter: blur(10px);
+
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+
+/* USER INFO */
+
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+
+/* AVATAR */
+
+.avatar-container {
+  position: relative;
+}
+
+.avatar-img {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 2px solid #00ff88;
+}
+
+
+/* ONLINE INDICATOR */
+
+.online-indicator {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+
+  width: 10px;
+  height: 10px;
+
+  background: #00ff88;
+  border-radius: 50%;
+
+  border: 2px solid #021b0f;
+}
+
+
+/* USER TEXT */
+
+.user-details h1 {
+  font-size: 15px;
+  margin: 0;
+}
+
+.user-details p {
+  font-size: 12px;
+  margin: 0;
+  color: #9cffc7;
+}
+
+
+/* HEADER ACTIONS */
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+
+/* BALANCE PILL */
+
+.balance-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  background: rgba(0,255,136,0.15);
+  padding: 6px 10px;
+
+  border-radius: 20px;
+}
+
+.balance-text {
+  font-weight: bold;
+}
+
+
+/* SETTINGS BUTTON */
+
+.settings-btn {
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.28);
+
+  width: 36px;
+  height: 36px;
+
+  border-radius: 10px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  color: #fff65e;
+  backdrop-filter: blur(14px);
+  box-shadow: 0 12px 24px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.28);
+}
+
+
+/* MAIN AREA */
+
+.dashboard-main {
+  padding: 16px;
+}
+
+
+/* SECTION HEADER */
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+
+  margin-bottom: 12px;
+}
+
+.section-title {
+  font-size: 18px;
+  margin: 0;
+}
+
+
+/* CREATE ROOM BUTTON */
+
+.create-room-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  background: linear-gradient(180deg, #fff982, #fff65e);
+  color: #061208;
+
+  border: 1px solid rgba(255,255,255,0.48);
+
+  padding: 8px 12px;
+
+  border-radius: 10px;
+
+  font-weight: bold;
+  cursor: pointer;
+  box-shadow: 0 14px 28px rgba(0,0,0,0.28), 0 0 22px rgba(255,246,94,0.16), inset 0 1px 0 rgba(255,255,255,0.62);
+}
+
+
+/* ROOM LIST */
+
+.rooms-list-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+
+/* ROOM CARD */
+
+.room-card {
+
+  background: rgba(255,255,255,0.05);
+
+  padding: 14px;
+
+  border-radius: 14px;
+
+  border: 1px solid rgba(255,255,255,0.08);
+
+  backdrop-filter: blur(5px);
+}
+
+
+/* CARD HEADER */
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+
+  margin-bottom: 10px;
+}
+
+
+/* ROOM TITLE */
+
+.room-title {
+  margin: 0;
+  font-size: 16px;
+}
+
+.room-subtitle {
+  font-size: 12px;
+  color: #9cffc7;
+}
+
+
+/* ENTRY FEE */
+
+.entry-fee-col {
+  text-align: right;
+}
+
+.fee-label {
+  font-size: 11px;
+  color: #aaa;
+}
+
+.fee-amount {
+  font-weight: bold;
+  font-size: 14px;
+}
+
+
+/* CARD FOOTER */
+
+.card-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+
+/* PLAYERS */
+
+.players-info {
+  font-size: 13px;
+  color: #ddd;
+}
+
+
+/* JOIN BUTTON */
+
+.join-btn {
+  background: linear-gradient(180deg, #fff982, #fff65e);
+
+  border: 1px solid rgba(255,255,255,0.48);
+
+  padding: 6px 14px;
+
+  border-radius: 10px;
+
+  font-weight: bold;
+
+  color: #061208;
+
+  cursor: pointer;
+
+  transition: 0.2s;
+  box-shadow: 0 14px 28px rgba(0,0,0,0.28), 0 0 22px rgba(255,246,94,0.16), inset 0 1px 0 rgba(255,255,255,0.62);
+}
+
+.join-btn:hover {
+  transform: translateY(-1px);
+}
+
+
+/* MOBILE IMPROVEMENTS */
+
+@media (max-width: 420px) {
+
+  .user-details h1 {
+    font-size: 14px;
+  }
+
+  .room-title {
+    font-size: 15px;
+  }
+
+}
