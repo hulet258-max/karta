@@ -73,10 +73,6 @@ const canCompletePatternWithJokers = (counts = [], jokerCount = 0) => {
       if (search(nextCounts, remainingJokers - 1)) return true;
     }
 
-    if (currentCounts.length < 4) {
-      return search([...currentCounts, 1], remainingJokers - 1);
-    }
-
     return false;
   };
 
@@ -86,11 +82,8 @@ const canCompletePatternWithJokers = (counts = [], jokerCount = 0) => {
 const analyzeWinningHand = (cards = []) => {
   const jokerCount = cards.filter(isJoker).length;
   const naturalCounts = Object.values(getRankCounts(cards, false)).sort((a, b) => b - a);
-  const allCounts = Object.values(getRankCounts(cards, true)).sort((a, b) => b - a);
-  const naturalPattern = matchesWinningPattern(allCounts);
-  const jokerBonus = jokerCount > 0 &&
-    naturalCounts.includes(4) &&
-    naturalCounts.filter((count) => count === 3).length >= 2;
+  const naturalPattern = matchesWinningPattern(naturalCounts);
+  const jokerBonus = false;
 
   return {
     isWinning: naturalPattern || canCompletePatternWithJokers(naturalCounts, jokerCount),
@@ -139,6 +132,12 @@ function GamePage() {
   const [practiceHelpDismissed, setPracticeHelpDismissed] = useState(false);
   const [leaveSummary, setLeaveSummary] = useState(null);
   const [playerProfiles, setPlayerProfiles] = useState({});
+  const [insufficientBalancePopup, setInsufficientBalancePopup] = useState(null);
+  const [pickedCardDecision, setPickedCardDecision] = useState(null);
+  const [opponentPickIndicator, setOpponentPickIndicator] = useState(null);
+  const [showGameRules, setShowGameRules] = useState(false);
+  const lastPickNonceRef = useRef(null);
+  const laidHistoryRef = useRef(null);
   const isLeavingRef = useRef(false);
 
   useEffect(() => {
@@ -216,7 +215,8 @@ function GamePage() {
   const gamePaused = Boolean(gameState.paused || gameState.leaveVote?.active);
   const isRoomCreator = Boolean(user && room && String(room.creatorId) === String(user.telegramId));
   const roomStats = gameState.roomStats || room?.roomStats || {};
-  const isPracticeGame = Boolean(gameState.practice || gameState.botGame || roomStats.practice || roomStats.botGame);
+  const isPracticeGame = Boolean(gameState.practice || roomStats.practice);
+  const botProfile = roomStats.botProfile || gameState.botProfile || room?.roomStats?.botProfile || null;
   const gameHistory = roomStats.games || [];
   const currentRoundNumber = Number(roomStats.gamesPlayed || 0) + (gameState.status === "playing" ? 1 : 0);
   const progressPlayers = (roomStats.escrowPlayers?.length ? roomStats.escrowPlayers : players) || [];
@@ -243,7 +243,6 @@ function GamePage() {
   const myProjectedWin = Number(
     roomStats.payouts?.[myUserId] || 0
   );
-  const projectedBalance = Number(user?.balance || 0);
   const completedGamesForYou = gameHistory.filter((game) => (
     (game.players || []).some((playerId) => String(playerId) === myUserId)
   ));
@@ -254,18 +253,17 @@ function GamePage() {
     (roomStats.currentRoundPlayers || []).some((playerId) => String(playerId) === myUserId)
       ? Number(roomStats.entryFee || room?.entryFee || 0)
       : 0;
-  const balanceAfterLeave = Number(user?.balance || 0);
   const getPlayerName = useCallback((playerId) => {
     const normalizedId = String(playerId || "");
     if (String(user?.telegramId || "") === normalizedId) {
       return t("you");
     }
     if (isBotPlayer(normalizedId)) {
-      return t("teachingBot");
+      return botProfile?.displayName || t("teachingBot");
     }
 
     return playerProfiles[normalizedId]?.displayName || `${t("player")} ${normalizedId.slice(-4)}`;
-  }, [playerProfiles, t, user?.telegramId]);
+  }, [botProfile?.displayName, playerProfiles, t, user?.telegramId]);
 
   useEffect(() => {
     const playerIds = [...new Set((players || []).map(String).filter((playerId) => playerId && !isBotPlayer(playerId)))];
@@ -492,6 +490,8 @@ function GamePage() {
   const groupedAndSortedCards = myCards
     .map((card, originalIndex) => ({ ...card, originalIndex }))
     .sort((a, b) => {
+      if (isJoker(a) !== isJoker(b)) return isJoker(a) ? -1 : 1;
+
       const sameRankCountA = myCards.filter((card) => card.rank === a.rank).length;
       const sameRankCountB = myCards.filter((card) => card.rank === b.rank).length;
 
@@ -597,11 +597,10 @@ function GamePage() {
           console.log(`✅ Server response from ${endpoint}:`, data);
 
           // Trigger flying card animation on successful pick/lay actions
-          if (action === "Pick" && target === "Deck") {
-            setFlyingCard({
-              type: "deckToHand",
-              variant: "back",
-              animate: false,
+          if (action === "Pick" && target === "Deck" && data.pickedCard) {
+            setPickedCardDecision({ card: data.pickedCard, revealed: false });
+            requestAnimationFrame(() => {
+              setPickedCardDecision((current) => current ? { ...current, revealed: true } : current);
             });
           } else if (action === "Pick" && target === "Laid Card") {
             if (topLaidCard) {
@@ -655,6 +654,11 @@ function GamePage() {
       });
       const data = await response.json();
       if (!response.ok || data.error) {
+        if (endpoint === "/gameplay/play-again" && data.code === "INSUFFICIENT_BALANCE" && data.depositRequired) {
+          setInsufficientBalancePopup({ entryFee: data.entryFee });
+          await refreshUser?.();
+          return null;
+        }
         showError(data.error || t("actionFailed"));
         return null;
       }
@@ -728,9 +732,43 @@ function GamePage() {
     await postGameplayAction("/gameplay/play-again");
   };
 
+  const handleInsertPickedCard = () => {
+    setPickedCardDecision(null);
+  };
+
+  const handleLayPickedCard = async () => {
+    const card = pickedCardDecision?.card;
+    if (!card) return;
+    const result = await postGameplayAction("/gameplay/lay-card", { card });
+    if (result) {
+      setPickedCardDecision(null);
+      setHighlightedCardKey(null);
+    }
+  };
+
   const topLaidCard = laidCards.length > 0 ? laidCards[laidCards.length - 1] : null;
   const topLaidIsJoker = isJoker(topLaidCard);
   const visibleLaidCards = laidCards.slice(-6);
+
+  useEffect(() => {
+    const lastPick = gameState.lastPick;
+    if (!lastPick?.nonce || lastPickNonceRef.current === lastPick.nonce) return undefined;
+    lastPickNonceRef.current = lastPick.nonce;
+    if (String(lastPick.playerId) === String(user?.telegramId)) return undefined;
+
+    setOpponentPickIndicator(lastPick.source);
+    const timer = setTimeout(() => setOpponentPickIndicator(null), 700);
+    return () => clearTimeout(timer);
+  }, [gameState.lastPick, user?.telegramId]);
+
+  useEffect(() => {
+    const history = laidHistoryRef.current;
+    if (history) history.scrollTop = history.scrollHeight;
+  }, [laidCards.length]);
+
+  useEffect(() => {
+    if (gameEnded || gameState.status !== "playing") setPickedCardDecision(null);
+  }, [gameEnded, gameState.status]);
 
   useEffect(() => {
     if (!room || !user) return undefined;
@@ -820,6 +858,30 @@ function GamePage() {
       background: "transparent",
       cursor: isMyTurn && laidCards.length > 0 && !topLaidIsJoker ? "pointer" : "default",
       position: "relative",
+    },
+    pickGlow: (active) => ({
+      position: "relative",
+      filter: active ? "drop-shadow(0 0 5px #ef4444) drop-shadow(0 0 12px #ef4444)" : "none",
+      animation: active ? "pickSourceGlow 0.72s ease-in-out infinite alternate" : "none",
+      borderRadius: "8px",
+      zIndex: active ? 30 : "auto",
+    }),
+    laidHistory: {
+      position: "absolute",
+      left: "calc(100% + 20px)",
+      top: "50%",
+      transform: "translateY(-50%)",
+      width: "72px",
+      height: "2.55rem",
+      overflowY: "auto",
+      scrollbarWidth: "none",
+      color: "rgba(255,255,255,0.42)",
+      fontSize: "0.62rem",
+      lineHeight: 1.35,
+      textAlign: "left",
+      pointerEvents: "auto",
+      touchAction: "pan-y",
+      overscrollBehavior: "contain",
     },
     laidPileCard: (card, index, total) => {
       const offsets = [
@@ -1083,6 +1145,54 @@ function GamePage() {
       borderRadius: "10px",
       padding: "18px",
       color: colors.cream,
+    },
+    pickedCardOverlay: {
+      position: "absolute",
+      inset: 0,
+      zIndex: 2200,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      background: "rgba(0,0,0,0.46)",
+      perspective: "900px",
+    },
+    pickedCardDecision: {
+      display: "grid",
+      gridTemplateColumns: "minmax(72px, 1fr) 120px minmax(72px, 1fr)",
+      alignItems: "center",
+      gap: "14px",
+      width: "min(390px, 92vw)",
+    },
+    pickedCard: {
+      width: "120px",
+      height: "174px",
+      position: "relative",
+      transformStyle: "preserve-3d",
+      transition: "transform 0.5s ease",
+    },
+    pickedCardFace: {
+      position: "absolute",
+      inset: 0,
+      borderRadius: "8px",
+      border: "2px solid rgba(255,255,255,0.9)",
+      backfaceVisibility: "hidden",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      fontSize: "2rem",
+      fontWeight: "bold",
+      overflow: "hidden",
+    },
+    decisionButton: {
+      minWidth: 0,
+      padding: "9px 10px",
+      borderRadius: "8px",
+      border: "1px solid rgba(255,255,255,0.32)",
+      background: "rgba(20,20,20,0.78)",
+      color: "#fff",
+      fontSize: "0.78rem",
+      fontWeight: 700,
+      cursor: "pointer",
     },
     confirmTitle: {
       margin: 0,
@@ -1539,6 +1649,11 @@ function GamePage() {
               box-shadow: 0 12px 30px rgba(0,0,0,0.5), 0 0 34px rgba(255,246,94,0.55);
             }
           }
+          @keyframes pickSourceGlow {
+            from { filter: drop-shadow(0 0 4px rgba(239,68,68,0.75)) drop-shadow(0 0 8px rgba(239,68,68,0.55)); }
+            to { filter: drop-shadow(0 0 8px #ef4444) drop-shadow(0 0 18px rgba(239,68,68,0.95)); }
+          }
+          .laid-history::-webkit-scrollbar { display: none; }
         `}
       </style>
       {/* ✨ Error Notification Toast */}
@@ -1564,13 +1679,13 @@ function GamePage() {
         </button>
       </div>
 
-      {isPracticeGame && !gameEnded && (
+      {!gameEnded && (
         <button
           type="button"
           style={styles.practiceHelpButton}
-          aria-label={t("practiceCoachTitle")}
-          title={t("practiceCoachTitle")}
-          onClick={() => setPracticeHelpDismissed(false)}
+          aria-label={t("gameRulesTitle")}
+          title={t("gameRulesTitle")}
+          onClick={() => setShowGameRules(true)}
         >
           <HelpCircle size={17} />
         </button>
@@ -1594,12 +1709,6 @@ function GamePage() {
             <div style={styles.progressDetailRow}>
               <span style={styles.progressDetailLabel}>{t("roomName")}</span>
               <span style={styles.progressDetailValue} title={room.name}>{room.name}</span>
-            </div>
-            <div style={styles.progressDetailRow}>
-              <span style={styles.progressDetailLabel}>{t("balance")}</span>
-              <span style={styles.progressDetailValue}>
-                <CoinAmount value={user?.balance} size={15} />
-              </span>
             </div>
             <div style={styles.progressDetailRow}>
               <span style={styles.progressDetailLabel}>{t("fee")}</span>
@@ -1673,7 +1782,7 @@ function GamePage() {
       {/* Center Table (Deck & Discard Pile) */}
       <div style={styles.centerArea}>
         {/* The remaining deck */}
-        <div style={{ position: "relative" }} onClick={handleDeckClick}>
+        <div style={styles.pickGlow(opponentPickIndicator === "deck")} onClick={handleDeckClick}>
           <div style={styles.deckCard}></div>
           <div style={{...styles.deckCard, position: "absolute", top: "-2px", left: "2px", zIndex: -1 }}></div>
           {/* ✨ Only show Pick button if it's your turn AND you have 10 cards */}
@@ -1686,7 +1795,7 @@ function GamePage() {
 
         {/* Discard / Laid Cards Pile */}
         <div 
-          style={styles.laidCardSlot}
+          style={{ ...styles.laidCardSlot, ...styles.pickGlow(opponentPickIndicator === "laid") }}
           onClick={handleLaidClick}
         >
           {topLaidCard ? (
@@ -1712,6 +1821,15 @@ function GamePage() {
             <button style={styles.actionPopupBtn} onClick={(e) => handleAction(e, "Pick", "Laid Card")}>
               {t("pick")}
             </button>
+          )}
+          {laidCards.length > 0 && (
+            <div ref={laidHistoryRef} className="laid-history" style={styles.laidHistory} aria-label={t("laidHistory")}>
+              {laidCards.map((card, index) => (
+                <div key={`laid-history-${card.rank}-${card.suit}-${index}`}>
+                  {isJoker(card) ? t("joker") : `${card.rank}${card.suit || ""}`}
+                </div>
+              ))}
+            </div>
           )}
         </div>
       </div>
@@ -1765,7 +1883,6 @@ function GamePage() {
               <div>{t("entryFeesPaid")}: {formatBirr(myFeesPaid)}</div>
               <div>{t("wonAndAdded")}: {formatBirr(myPaidOut)}</div>
               <div>{t("currentRoundFee")}: {formatBirr(currentRoundFeeAtRisk)}</div>
-              <div>{t("balanceAfterLeaving")}: {formatBirr(balanceAfterLeave)}</div>
             </div>
             <div style={styles.confirmActions}>
               <button
@@ -1799,7 +1916,6 @@ function GamePage() {
               <div>{t("totalRoomAmount")}: {formatBirr(leaveSummaryPot)}</div>
               <div>{t("commission")}: {formatBirr(leaveSummaryCommission)}</div>
               <div>{t("youReceive")}: {formatBirr(leaveSummaryPayout)}</div>
-              <div>{t("newBalance")}: {formatBirr(user?.balance)}</div>
               <div>{t("gamesPlayed")}: {Number(leaveSummary.gamesPlayed || 0)}</div>
             </div>
             <div style={styles.progressList}>
@@ -1856,6 +1972,82 @@ function GamePage() {
         </div>
       )}
 
+      {showGameRules && (
+        <div style={styles.confirmOverlay}>
+          <div style={styles.confirmPopup}>
+            <div style={styles.progressHeader}>
+              <h3 style={styles.confirmTitle}>{t("gameRulesTitle")}</h3>
+              <button style={styles.progressIconBtn} onClick={() => setShowGameRules(false)} aria-label={t("close")}>
+                <X size={14} />
+              </button>
+            </div>
+            <div style={styles.gameOverDetails}>
+              <div>1. {t("gameRulesPick")}</div>
+              <div>2. {t("gameRulesLay")}</div>
+              <div>3. {t("gameRulesGoal")}</div>
+              <div>4. {t("gameRulesJoker")}</div>
+              <div>5. {t("gameRulesDeclare")}</div>
+            </div>
+            {isPracticeGame && (
+              <div style={styles.confirmActions}>
+                <button style={styles.confirmLeaveBtn} onClick={() => {
+                  setPracticeHelpDismissed(false);
+                  setShowGameRules(false);
+                }}>
+                  {t("showCurrentHelp")}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {insufficientBalancePopup && (
+        <div style={styles.confirmOverlay}>
+          <div style={styles.confirmPopup}>
+            <h3 style={styles.confirmTitle}>{t("insufficientBalance")}</h3>
+            <p style={styles.confirmText}>
+              {t("playAgainBalanceRequired", { fee: insufficientBalancePopup.entryFee })}
+            </p>
+            <div style={styles.confirmActions}>
+              <button style={styles.confirmCancelBtn} onClick={() => setInsufficientBalancePopup(null)}>
+                {t("cancel")}
+              </button>
+              <button style={styles.confirmLeaveBtn} onClick={() => navigate("/deposit")}>
+                {t("deposit")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pickedCardDecision?.card && !gameEnded && (
+        <div style={styles.pickedCardOverlay}>
+          <div style={styles.pickedCardDecision}>
+            <button style={styles.decisionButton} onClick={handleInsertPickedCard}>
+              {t("insertCard")}
+            </button>
+            <div style={{
+              ...styles.pickedCard,
+              transform: pickedCardDecision.revealed ? "rotateY(180deg)" : "rotateY(0deg)",
+            }}>
+              <div style={{ ...styles.pickedCardFace, background: "#8f2f2f" }} />
+              <div style={{
+                ...styles.pickedCardFace,
+                background: "#fffaf0",
+                color: pickedCardDecision.card.color || "#111",
+                transform: "rotateY(180deg)",
+              }}>
+                {renderCardFace(pickedCardDecision.card)}
+              </div>
+            </div>
+            <button style={styles.decisionButton} onClick={handleLayPickedCard} disabled={isActionLoading}>
+              {t("layCard")}
+            </button>
+          </div>
+        </div>
+      )}
+
       {gameEnded && gameResult && (
         <div style={styles.gameOverOverlay}>
           <div
@@ -1882,7 +2074,6 @@ function GamePage() {
                   <div>{t("totalRoomAmount")}: {formatBirr(totalPot)}</div>
                   <div>{t("commission")}: {formatBirr(projectedCommission)}</div>
                   <div>{t("youReceived")}: {formatBirr(myProjectedWin)}</div>
-                  <div>{t("currentBalance")}: {formatBirr(projectedBalance)}</div>
                 </>
               )}
               <div>
