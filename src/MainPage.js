@@ -155,7 +155,7 @@ function MainPage() {
       color: colors.text,
       fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
       position: "relative",
-      padding: "80px 20px 12px",
+      padding: "96px 20px 12px",
       boxSizing: "border-box",
     },
     bgCards: {
@@ -200,7 +200,7 @@ function MainPage() {
     },
     topBar: {
       position: "absolute",
-      top: "56px",
+      top: "72px",
       left: "15px",
       right: "15px",
       zIndex: 10,

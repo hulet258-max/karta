@@ -3,6 +3,37 @@ import { socket } from "../socket";
 
 const UserContext = createContext(null);
 
+const TELEGRAM_LOGIN_FIELDS = [
+  "id",
+  "first_name",
+  "last_name",
+  "username",
+  "photo_url",
+  "auth_date",
+  "hash",
+];
+
+const getTelegramLoginDataFromUrl = () => {
+  const params = new URLSearchParams(window.location.search);
+  if (!params.get("id") || !params.get("hash") || !params.get("auth_date")) return null;
+
+  return TELEGRAM_LOGIN_FIELDS.reduce((loginData, field) => {
+    const value = params.get(field);
+    if (value !== null) loginData[field] = value;
+    return loginData;
+  }, {});
+};
+
+const removeTelegramLoginDataFromUrl = () => {
+  const url = new URL(window.location.href);
+  TELEGRAM_LOGIN_FIELDS.forEach((field) => url.searchParams.delete(field));
+  window.history.replaceState(
+    window.history.state,
+    "",
+    `${url.pathname}${url.search}${url.hash}`
+  );
+};
+
 const getReferralCodeFromLaunch = () => {
   const tg = window.Telegram?.WebApp;
   const startParam = tg?.initDataUnsafe?.start_param || "";
@@ -104,6 +135,29 @@ export const UserProvider = ({ children }) => {
           }
         } catch (err) {
           console.warn("initData parse failed:", err);
+        }
+      }
+
+      if (!id) {
+        const loginData = getTelegramLoginDataFromUrl();
+        if (loginData) {
+          try {
+            const loginResponse = await fetch(`${API_BASE_URL}/telegram-login`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ loginData }),
+            });
+            const loginResult = await loginResponse.json();
+            if (!loginResponse.ok || !loginResult.success) {
+              throw new Error(loginResult.error || "Telegram login failed.");
+            }
+
+            tgUser = loginResult.telegramUser;
+            id = String(tgUser.id);
+            removeTelegramLoginDataFromUrl();
+          } catch (loginError) {
+            console.error("Telegram login URL verification failed:", loginError);
+          }
         }
       }
 
