@@ -41,6 +41,7 @@ function MainPage() {
   const handleShare = async () => {
     try {
       let shareUrl = window.location.origin;
+      let referralCode = "";
       if (user?.telegramId || user?.id) {
         const response = await fetch(`${API_BASE_URL}/referral-link`, {
           method: "POST",
@@ -54,6 +55,7 @@ function MainPage() {
         const data = await response.json();
         if (response.ok && data.success && data.link) {
           shareUrl = data.link;
+          referralCode = data.code || "";
         }
       }
 
@@ -64,6 +66,11 @@ function MainPage() {
       };
       const telegramShareUrl = `https://t.me/share/url?url=${encodeURIComponent(shareData.url)}&text=${encodeURIComponent(shareData.text)}`;
       const tg = window.Telegram?.WebApp;
+
+      if (referralCode && tg?.switchInlineQuery) {
+        tg.switchInlineQuery(`ref_${referralCode}`, ["users", "groups"]);
+        return;
+      }
 
       if (tg?.openTelegramLink) {
         tg.openTelegramLink(telegramShareUrl);
