@@ -26,6 +26,18 @@ function MainPage() {
 
   }, [user]);
 
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    const previousOverscrollBehavior = document.body.style.overscrollBehavior;
+    document.body.style.overflow = "hidden";
+    document.body.style.overscrollBehavior = "none";
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.body.style.overscrollBehavior = previousOverscrollBehavior;
+    };
+  }, []);
+
   const handleShare = async () => {
     try {
       let shareUrl = window.location.origin;
@@ -122,9 +134,11 @@ function MainPage() {
 
   const styles = {
     container: {
-      minHeight: "100dvh",
+      height: "100dvh",
+      minHeight: 0,
       width: "100vw",
-      overflowX: "hidden",
+      overflow: "hidden",
+      overscrollBehavior: "none",
       display: "flex",
       flexDirection: "column",
       alignItems: "center",
@@ -134,7 +148,7 @@ function MainPage() {
       color: colors.text,
       fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
       position: "relative",
-      padding: "96px 20px 20px",
+      padding: "80px 20px 12px",
       boxSizing: "border-box",
     },
     bgCards: {
@@ -171,14 +185,15 @@ function MainPage() {
       justifyContent: "flex-start",
       width: "100%",
       maxWidth: "350px",
-      minHeight: "calc(100dvh - 40px)",
-      gap: "20px",
+      flex: 1,
+      minHeight: 0,
+      gap: "clamp(8px, 1.8dvh, 16px)",
       boxSizing: "border-box",
-      paddingTop: "56px",
+      paddingTop: "clamp(8px, 2.8dvh, 24px)",
     },
     topBar: {
       position: "absolute",
-      top: "72px",
+      top: "56px",
       left: "15px",
       right: "15px",
       zIndex: 10,
@@ -241,6 +256,8 @@ function MainPage() {
     settingsPanel: {
       width: "100%",
       maxWidth: "340px",
+      maxHeight: "calc(100dvh - 36px)",
+      overflowY: "auto",
       ...glassPanel,
       borderRadius: "16px",
       padding: "18px",
@@ -406,8 +423,8 @@ function MainPage() {
       padding: "5px 7px",
     }),
     logoWrap: {
-      width: "280px",
-      height: "280px",
+      width: "clamp(120px, 34dvh, 260px)",
+      height: "clamp(120px, 34dvh, 260px)",
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
@@ -457,7 +474,7 @@ function MainPage() {
       maxWidth: "350px",
       display: "flex",
       flexDirection: "column",
-      gap: "16px",
+      gap: "clamp(8px, 1.5dvh, 14px)",
     },
     shareCard: {
       width: "100%",
@@ -466,8 +483,8 @@ function MainPage() {
       alignItems: "center",
       justifyContent: "space-between",
       gap: "14px",
-      padding: "16px",
-      minHeight: "82px",
+      padding: "clamp(10px, 1.8dvh, 14px)",
+      minHeight: "clamp(58px, 9dvh, 78px)",
       boxSizing: "border-box",
       borderRadius: "10px",
       ...glassPanel,
@@ -516,7 +533,7 @@ function MainPage() {
       gap: "7px",
       ...goldButton,
       borderRadius: "10px",
-      padding: "12px 10px",
+      padding: "clamp(9px, 1.5dvh, 12px) 10px",
       color: colors.textDark,
       fontWeight: "bold",
       fontSize: "0.85rem",
@@ -529,10 +546,10 @@ function MainPage() {
       gap: "9px",
       ...goldButton,
       borderRadius: "10px",
-      padding: "14px 20px",
+      padding: "clamp(10px, 1.8dvh, 14px) 20px",
       width: "100%",
       maxWidth: "350px",
-      fontSize: "1.2rem",
+      fontSize: "clamp(1rem, 2.4dvh, 1.2rem)",
       fontWeight: "900",
       color: colors.textDark,
       cursor: "pointer",

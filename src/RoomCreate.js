@@ -20,36 +20,6 @@ function RoomCreate({ onClose, onRoomCreated }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const getBotUsername = () => String(
-    process.env.REACT_APP_BOT_USERNAME ||
-    process.env.REACT_APP_TELEGRAM_BOT_USERNAME ||
-    ""
-  ).replace(/^@/, "").trim();
-
-  const openTelegramShareFallback = (inlineQuery) => {
-    const botUsername = getBotUsername();
-
-    if (!botUsername) {
-      return false;
-    }
-
-    const shareText = `@${botUsername} ${inlineQuery}`;
-    const shareUrl = `https://t.me/share/url?text=${encodeURIComponent(shareText)}`;
-    const tg = window.Telegram?.WebApp;
-
-    try {
-      if (tg?.openTelegramLink && tg?.initData) {
-        tg.openTelegramLink(shareUrl);
-        return true;
-      }
-    } catch (shareError) {
-      console.warn("Telegram share fallback failed:", shareError);
-    }
-
-    window.open(shareUrl, "_blank", "noopener,noreferrer");
-    return true;
-  };
-
   const handleJoinRoom = async (roomId) => {
     const joinRes = await fetch(`${BASE_URL}/join-room`, {
       method: "POST",
@@ -85,19 +55,14 @@ function RoomCreate({ onClose, onRoomCreated }) {
     setError("");
     const inlineQuery = `join_room_${createdRoomId}`;
     const tg = window.Telegram?.WebApp;
-    const isTelegramMiniApp = Boolean(tg?.initData || tg?.initDataUnsafe?.user);
 
     try {
-      if (isTelegramMiniApp && tg?.switchInlineQuery) {
-        tg.switchInlineQuery(inlineQuery, ["users", "groups"]);
+      if (tg?.switchInlineQuery) {
+        tg.switchInlineQuery(inlineQuery, ["users"]);
         return;
       }
     } catch (shareError) {
       console.warn("Telegram inline share failed:", shareError);
-    }
-
-    if (openTelegramShareFallback(inlineQuery)) {
-      return;
     }
 
     setError(t("shareTelegramUnavailable"));

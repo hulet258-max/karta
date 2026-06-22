@@ -9,7 +9,7 @@ import { formatBirr } from "./utils/money";
 import CoinAmount from "./CoinAmount";
 
 const rankOrder = ["A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2"];
-const PAGE_TOP_PADDING = "96px";
+const PAGE_TOP_PADDING = "80px";
 const suitOrder = ["♠", "♥", "♦", "♣"];
 
 const roundMoney = (value) => {

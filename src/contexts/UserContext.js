@@ -8,6 +8,7 @@ const getReferralCodeFromLaunch = () => {
   const startParam = tg?.initDataUnsafe?.start_param || "";
   const params = new URLSearchParams(window.location.search);
   const rawCode = params.get("ref") || params.get("startapp") || startParam;
+  if (String(rawCode || "").startsWith("room_")) return "";
   return String(rawCode || "").replace(/^ref_/, "").trim();
 };
 

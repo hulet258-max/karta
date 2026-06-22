@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+import { BrowserRouter as Router, Navigate, Routes, Route } from "react-router-dom";
 import { UserProvider, useUser } from "./contexts/UserContext";
 import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
 
@@ -10,6 +10,21 @@ import DepositPage from "./DepositPage";
 import WithdrawPage from "./withdrawpage";
 import SplashScreen from "./SplashScreen";
 import CoinAmount from "./CoinAmount";
+
+function getSharedRoomId() {
+  const tg = window.Telegram?.WebApp;
+  const params = new URLSearchParams(window.location.search);
+  const launchParam = tg?.initDataUnsafe?.start_param || params.get("startapp") || "";
+  const match = String(launchParam).match(/^room_([A-Za-z0-9_-]+)$/);
+  return match?.[1] || "";
+}
+
+function LaunchRoute() {
+  const roomId = getSharedRoomId();
+  return roomId
+    ? <Navigate to={`/game/${encodeURIComponent(roomId)}`} replace />
+    : <MainPage />;
+}
 
 function requestLaunchFullscreen() {
   if (typeof window.__requestKartaFullscreen === "function") {
@@ -145,7 +160,7 @@ function AppShell() {
   return (
     <>
       <Routes>
-        <Route path="/" element={<MainPage />} />
+        <Route path="/" element={<LaunchRoute />} />
         <Route path="/deposit" element={<DepositPage />} />
         <Route path="/withdraw" element={<WithdrawPage />} />
         <Route path="/second" element={<SecondPage />} />
