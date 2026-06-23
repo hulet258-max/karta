@@ -346,7 +346,7 @@ function SecondPage() {
       color: colors.text,
       fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
       position: "relative",
-      padding: "96px 16px 16px",
+      padding: "84px 16px 16px",
       boxSizing: "border-box",
     },
     overlay: {
@@ -401,7 +401,7 @@ function SecondPage() {
       justifyContent: "space-between",
       alignItems: "center",
       width: "100%",
-      marginBottom: "14px",
+      marginBottom: "12px",
     },
     topRight: {
       display: "flex",
@@ -409,27 +409,28 @@ function SecondPage() {
       gap: "8px",
     },
     balanceText: {
-      fontSize: "1rem",
+      fontSize: "0.9rem",
       fontWeight: "bold",
       color: colors.gold,
-      ...ui.field,
-      padding: "7px 10px",
-      borderRadius: "8px",
-      backdropFilter: "blur(14px) saturate(1.3)",
-      WebkitBackdropFilter: "blur(14px) saturate(1.3)",
+      background: "rgba(0, 0, 0, 0.28)",
+      border: `1px solid color-mix(in srgb, ${colors.gold} 42%, transparent)`,
+      borderRadius: "999px",
+      padding: "7px 11px",
+      backdropFilter: "blur(5px)",
     },
     iconBtn: {
-      width: "36px",
-      height: "36px",
+      width: "38px",
+      height: "34px",
       display: "inline-flex",
       alignItems: "center",
       justifyContent: "center",
-      ...ui.iconButton,
+      background: `color-mix(in srgb, ${colors.gold} 12%, transparent)`,
+      border: `1px solid color-mix(in srgb, ${colors.gold} 46%, transparent)`,
       color: colors.gold,
-      borderRadius: "8px",
+      borderRadius: "999px",
+      padding: 0,
       cursor: "pointer",
-      backdropFilter: "blur(14px) saturate(1.3)",
-      WebkitBackdropFilter: "blur(14px) saturate(1.3)",
+      backdropFilter: "blur(5px)",
     },
     carousel: {
       width: "100%",
@@ -664,7 +665,7 @@ function SecondPage() {
       flexDirection: "column",
       gap: "8px",
     },
-    roomCard: {
+    roomCard: (isMine = false) => ({
       ...glassPanel,
       borderRadius: "8px",
       padding: "9px 10px",
@@ -673,7 +674,16 @@ function SecondPage() {
       display: "flex",
       flexDirection: "column",
       gap: "6px",
-    },
+      border: isMine
+        ? `1px solid color-mix(in srgb, ${colors.gold} 78%, #ffffff 12%)`
+        : glassPanel.border,
+      background: isMine
+        ? `linear-gradient(180deg, color-mix(in srgb, ${colors.gold} 24%, rgba(15,61,31,0.92)), rgba(6,31,16,0.9))`
+        : glassPanel.background,
+      boxShadow: isMine
+        ? "0 18px 40px rgba(0,0,0,0.34), 0 0 0 1px rgba(241,196,15,0.24), inset 0 1px 0 rgba(255,255,255,0.28)"
+        : glassPanel.boxShadow,
+    }),
     roomHeader: {
       display: "flex",
       justifyContent: "space-between",
@@ -741,6 +751,10 @@ function SecondPage() {
       letterSpacing: 0,
       transition: "transform 0.1s",
     },
+    getBackBtn: {
+      background: "linear-gradient(180deg, #75dfa0, #2b995e)",
+      color: "#03140b",
+    },
     roomActions: {
       display: "flex",
       alignItems: "center",
@@ -773,7 +787,7 @@ function SecondPage() {
 
       <div style={styles.contentWrapper}>
         <header style={styles.topBar}>
-          <button style={styles.iconBtn} onClick={() => navigate("/")} aria-label={t("back")} title={t("back")}>
+          <button style={styles.iconBtn} onClick={() => navigate("/", { replace: true })} aria-label={t("back")} title={t("back")}>
             <ArrowLeft size={19} />
           </button>
           <div style={styles.topRight}>
@@ -844,13 +858,16 @@ function SecondPage() {
 
           <div style={styles.roomList}>
             {rooms.map((room) => (
-              <div style={styles.roomCard} key={room.id}>
+              <div
+                style={styles.roomCard(isUserInRoom(room) && ["waiting", "playing", "ended"].includes(room?.status))}
+                key={room.id}
+              >
                 <div style={styles.roomHeader}>
                   <div>
                     <h5 style={styles.roomTitle}>{room.name}</h5>
                     <span style={styles.roomSubtitle}>
                       {room.maxPlayers} {t("players")} - {formatRoomType(room.type)}
-                      {isUserInRoom(room) && ["waiting", "playing", "ended"].includes(room?.status) ? ` - ${t("inProgress")}` : ""}
+                      {isUserInRoom(room) && ["waiting", "playing", "ended"].includes(room?.status) ? ` - ${t("getBack")}` : ""}
                     </span>
                   </div>
                   <div style={styles.feeCol}>
@@ -879,7 +896,10 @@ function SecondPage() {
                       </button>
                     )}
                     <button 
-                      style={styles.joinBtn} 
+                      style={{
+                        ...styles.joinBtn,
+                        ...(isUserInRoom(room) && ["waiting", "playing", "ended"].includes(room?.status) ? styles.getBackBtn : {}),
+                      }}
                       onClick={() => handleJoinClick(room)}
                       onMouseDown={(e) => {
                         e.currentTarget.style.transform = "translateY(1px) scale(0.985)";

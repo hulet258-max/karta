@@ -1,4 +1,5 @@
 import React from "react";
+import { WalletCards } from "lucide-react";
 import { formatCoins } from "./utils/money";
 
 function CoinAmount({ value, size = 16, style = {}, textStyle = {} }) {
@@ -33,7 +34,7 @@ function CoinAmount({ value, size = 16, style = {}, textStyle = {} }) {
           boxShadow: "inset 0 1px 0 rgba(255,255,255,0.45), 0 2px 6px rgba(0,0,0,0.22)",
         }}
       >
-        Br
+        <WalletCards size={Math.max(10, Math.round(size * 0.68))} strokeWidth={2.4} />
       </span>
       <span style={textStyle}>{formatCoins(value)}</span>
     </span>

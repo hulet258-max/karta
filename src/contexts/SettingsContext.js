@@ -222,6 +222,7 @@ const translations = {
     withdrawBalanceError: "Withdraw amount is greater than your balance.",
     withdrawFailed: "Withdraw failed.",
     withdrawSuccess: "Withdraw request sent successfully.",
+    withdrawRequestSentInfo: "Your withdrawal request for {amount} has been sent to admin. You will receive a bot message after it is marked Sent.",
     loadingGame: "Loading Game...",
     fee: "Fee",
     pick: "Pick",

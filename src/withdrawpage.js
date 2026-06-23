@@ -96,7 +96,7 @@ function WithdrawPage() {
       setAmount("");
       setResult({
         type: "success",
-        text: data.message || t("withdrawSuccess"),
+        text: t("withdrawRequestSentInfo", { amount: formatCoins(parsedAmount) }),
       });
     } catch (error) {
       setResult({
