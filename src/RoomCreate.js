@@ -1,10 +1,10 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Globe2, Lock, Play, Send, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useSettings } from "./contexts/SettingsContext";
 import { useUser } from "./contexts/UserContext";
 import CoinAmount from "./CoinAmount";
-import { MIN_ROOM_ENTRY_COINS } from "./utils/money";
+import { COIN_BIRR_VALUE, MIN_ROOM_ENTRY_COINS, birrToCoins, coinsToBirr, formatCoins, isWholeBirrUnit } from "./utils/money";
 import ShareToast from "./ShareToast";
 import TinySpinner from "./TinySpinner";
 import { sharePreparedTelegramMessage, switchTelegramInlineQuery } from "./utils/telegramShare";
@@ -17,7 +17,8 @@ function RoomCreate({ onClose, onRoomCreated }) {
   const BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000/api";
   const [roomName, setRoomName] = useState("");
   const [gameType, setGameType] = useState("2-players");
-  const [entryFee, setEntryFee] = useState(String(MIN_ROOM_ENTRY_COINS));
+  const minRoomEntryBirr = coinsToBirr(MIN_ROOM_ENTRY_COINS);
+  const [entryFee, setEntryFee] = useState(String(minRoomEntryBirr));
   const [visibility, setVisibility] = useState("public");
   const [createdRoomId, setCreatedRoomId] = useState("");
   const [createdRoom, setCreatedRoom] = useState(null);
@@ -26,6 +27,32 @@ function RoomCreate({ onClose, onRoomCreated }) {
   const [goToGameLoading, setGoToGameLoading] = useState(false);
   const [error, setError] = useState("");
   const [shareToast, setShareToast] = useState(null);
+  const [sharedTo, setSharedTo] = useState("");
+
+  useEffect(() => {
+    if (!createdRoomId) return undefined;
+
+    const handleRoomUpdate = (payload) => {
+      const nextRoom = payload?.room;
+      if (!nextRoom || String(nextRoom.id) !== String(createdRoomId)) return;
+      setCreatedRoom(nextRoom);
+    };
+
+    const handleRoomDeleted = ({ roomId }) => {
+      if (String(roomId) !== String(createdRoomId)) return;
+      setCreatedRoom(null);
+      setCreatedRoomId("");
+      setError(t("actionFailed"));
+    };
+
+    socket.on("room_update", handleRoomUpdate);
+    socket.on("room_deleted", handleRoomDeleted);
+
+    return () => {
+      socket.off("room_update", handleRoomUpdate);
+      socket.off("room_deleted", handleRoomDeleted);
+    };
+  }, [createdRoomId, t]);
 
   const handleJoinRoom = async (roomId) => {
     const joinRes = await fetch(`${BASE_URL}/join-room`, {
@@ -67,7 +94,7 @@ function RoomCreate({ onClose, onRoomCreated }) {
     const shareContent = [
       shareRoom.name || roomName.trim() || "Private Karta game",
       `${Number(shareRoom.playerCount || 0)}/${Number(shareRoom.maxPlayers || 0) || "?"} ${t("players")}`,
-      `${Number(shareRoom.entryFee || entryFee || 0)} ${t("coins")}`,
+      formatCoins(shareRoom.entryFee || birrToCoins(entryFee)),
     ].join(" · ");
     const showShareToast = (type, messageKey) => {
       setShareToast({
@@ -93,7 +120,10 @@ function RoomCreate({ onClose, onRoomCreated }) {
 
       if (
         sharePreparedTelegramMessage(tg, data.preparedMessageId, {
-          onSent: () => showShareToast("success", "telegramShareSent"),
+          onSent: () => {
+            setSharedTo(t("sharedToTelegram"));
+            showShareToast("success", "telegramShareSent");
+          },
           onCanceled: () => showShareToast("info", "telegramShareCanceled"),
         })
       ) {
@@ -101,6 +131,7 @@ function RoomCreate({ onClose, onRoomCreated }) {
       }
 
       if (switchTelegramInlineQuery(tg, data.fallbackQuery || fallbackQuery)) {
+        setSharedTo(t("sharedToTelegram"));
         showShareToast("info", "telegramShareFallbackOpened");
         return;
       }
@@ -115,7 +146,11 @@ function RoomCreate({ onClose, onRoomCreated }) {
   };
 
   const handleGoToGame = async () => {
-    if (!createdRoomId || goToGameLoading) return;
+    const readyToJoin = createdRoom && Number(createdRoom.playerCount || 0) >= Number(createdRoom.maxPlayers || 0);
+    if (!createdRoomId || goToGameLoading || !readyToJoin) {
+      setError(t("waitingForPlayersToJoin"));
+      return;
+    }
 
     setGoToGameLoading(true);
     setError("");
@@ -135,11 +170,12 @@ function RoomCreate({ onClose, onRoomCreated }) {
       return;
     }
 
-    const entryFeeCoins = Number(entryFee);
-    if (!Number.isInteger(entryFeeCoins) || entryFeeCoins < MIN_ROOM_ENTRY_COINS) {
-      setError(t("minRoomEntryError", { amount: MIN_ROOM_ENTRY_COINS }));
+    const entryFeeBirr = Number(entryFee);
+    if (!isWholeBirrUnit(entryFeeBirr) || entryFeeBirr < minRoomEntryBirr) {
+      setError(t("minRoomEntryError", { amount: formatCoins(MIN_ROOM_ENTRY_COINS) }));
       return;
     }
+    const entryFeeCoins = birrToCoins(entryFeeBirr);
 
     setLoading(true);
     setError("");
@@ -188,6 +224,11 @@ function RoomCreate({ onClose, onRoomCreated }) {
   };
 
   const { colors, glassPanel, field: glassField, goldButton } = ui;
+  const privateRoomCreated = visibility === "private" && createdRoomId;
+  const playerList = (createdRoom?.players || []).map(String);
+  const privateRoomPlayerCount = Number(createdRoom?.playerCount || playerList.length || 0);
+  const privateRoomMaxPlayers = Number(createdRoom?.maxPlayers || 0);
+  const canGoToGame = privateRoomCreated && privateRoomMaxPlayers > 0 && privateRoomPlayerCount >= privateRoomMaxPlayers;
 
   const styles = {
     overlay: {
@@ -348,6 +389,29 @@ function RoomCreate({ onClose, onRoomCreated }) {
       fontSize: "0.78rem",
       textTransform: "uppercase",
     },
+    privateMetaText: {
+      margin: 0,
+      color: `color-mix(in srgb, ${colors.cream} 80%, transparent)`,
+      fontSize: "0.78rem",
+      lineHeight: 1.35,
+    },
+    playerList: {
+      display: "flex",
+      flexDirection: "column",
+      gap: "5px",
+      marginTop: "2px",
+    },
+    playerPill: {
+      ...ui.field,
+      borderRadius: "999px",
+      padding: "7px 10px",
+      color: colors.cream,
+      fontSize: "0.76rem",
+      fontWeight: 800,
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      whiteSpace: "nowrap",
+    },
     telegramBtn: {
       width: "100%",
       display: "inline-flex",
@@ -378,6 +442,26 @@ function RoomCreate({ onClose, onRoomCreated }) {
       cursor: "pointer",
       fontSize: "0.8rem",
     },
+    cancelBtn: {
+      width: "100%",
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: "6px",
+      ...ui.secondaryButton,
+      borderRadius: "10px",
+      padding: "10px",
+      color: colors.cream,
+      fontWeight: "bold",
+      cursor: "pointer",
+      fontSize: "0.8rem",
+    },
+    actionPair: {
+      display: "grid",
+      gridTemplateColumns: "1fr 1fr",
+      gap: "8px",
+      marginTop: "10px",
+    },
     buttonDisabled: {
       opacity: 0.66,
       cursor: "wait",
@@ -402,8 +486,6 @@ function RoomCreate({ onClose, onRoomCreated }) {
       transition: "transform 0.1s",
     }
   };
-
-  const privateRoomCreated = visibility === "private" && createdRoomId;
 
   return (
     <div style={styles.overlay} onClick={onClose}>
@@ -469,13 +551,13 @@ function RoomCreate({ onClose, onRoomCreated }) {
               </div>
 
               <div style={styles.formGroup}>
-                <label htmlFor="entry-fee" style={styles.label}>{t("entryFee")} ({t("coins")})</label>
+                <label htmlFor="entry-fee" style={styles.label}>{t("entryFee")} ({t("birr")})</label>
                 <input
                   type="number"
                   id="entry-fee"
-                  min={MIN_ROOM_ENTRY_COINS}
-                  step="1"
-                  placeholder={String(MIN_ROOM_ENTRY_COINS)}
+                  min={minRoomEntryBirr}
+                  step={COIN_BIRR_VALUE}
+                  placeholder={String(minRoomEntryBirr)}
                   value={entryFee}
                   onChange={(e) => setEntryFee(e.target.value)}
                   style={styles.input}
@@ -524,6 +606,20 @@ function RoomCreate({ onClose, onRoomCreated }) {
 
         {privateRoomCreated && (
           <div style={styles.privateLinkBox}>
+            <div style={styles.privateLinkTitle}>
+              <span>{t("playersInRoom")}</span>
+              <span>{privateRoomPlayerCount}/{privateRoomMaxPlayers}</span>
+            </div>
+            {sharedTo && <p style={styles.privateMetaText}>{sharedTo}</p>}
+            <div style={styles.playerList}>
+              {playerList.length ? playerList.map((playerId, index) => (
+                <div style={styles.playerPill} key={`${playerId}-${index}`}>
+                  {index + 1}. {String(playerId) === String(user?.telegramId || user?.id) ? t("you") : playerId}
+                </div>
+              )) : (
+                <div style={styles.playerPill}>{t("waitingForPlayersToJoin")}</div>
+              )}
+            </div>
             <button
               style={{ ...styles.telegramBtn, ...(shareLoading ? styles.buttonDisabled : {}) }}
               onClick={handleTelegramShare}
@@ -533,37 +629,45 @@ function RoomCreate({ onClose, onRoomCreated }) {
               {shareLoading ? t("preparingTelegramShare") : t("shareTelegram")}
             </button>
             <button
-              style={{ ...styles.goToGameBtn, ...(goToGameLoading ? styles.buttonDisabled : {}) }}
+              style={{ ...styles.goToGameBtn, ...(!canGoToGame || goToGameLoading ? styles.buttonDisabled : {}) }}
               onClick={handleGoToGame}
-              disabled={shareLoading || goToGameLoading}
+              disabled={shareLoading || goToGameLoading || !canGoToGame}
             >
               {goToGameLoading ? <TinySpinner size={15} /> : <Play size={15} />}
-              {goToGameLoading ? t("joining") : t("goToGame")}
+              {goToGameLoading ? t("joining") : canGoToGame ? t("goToGame") : t("waitingForPlayersToJoin")}
+            </button>
+            <button type="button" style={styles.cancelBtn} onClick={onClose}>
+              <X size={15} />
+              {t("cancelToLobby")}
             </button>
           </div>
         )}
 
         {!privateRoomCreated && (
-          <div>
-          <button 
-            style={styles.createBtn} 
-            onClick={handleCreate}
-            disabled={loading}
-            onMouseDown={(e) => {
-              e.currentTarget.style.transform = "translateY(1px) scale(0.985)";
-              e.currentTarget.style.boxShadow = "0 8px 18px rgba(0,0,0,0.24), inset 0 1px 0 rgba(255,255,255,0.5)";
-            }}
-            onMouseUp={(e) => {
-              e.currentTarget.style.transform = "translateY(0)";
-              e.currentTarget.style.boxShadow = goldButton.boxShadow;
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = "translateY(0)";
-              e.currentTarget.style.boxShadow = goldButton.boxShadow;
-            }}
-          >
-            {loading ? t("creating") : visibility === "private" ? t("createRoom") : t("createAndJoin")}
-          </button>
+          <div style={styles.actionPair}>
+            <button type="button" style={styles.cancelBtn} onClick={onClose} disabled={loading}>
+              <X size={15} />
+              {t("cancel")}
+            </button>
+            <button 
+              style={{ ...styles.createBtn, marginTop: 0 }} 
+              onClick={handleCreate}
+              disabled={loading}
+              onMouseDown={(e) => {
+                e.currentTarget.style.transform = "translateY(1px) scale(0.985)";
+                e.currentTarget.style.boxShadow = "0 8px 18px rgba(0,0,0,0.24), inset 0 1px 0 rgba(255,255,255,0.5)";
+              }}
+              onMouseUp={(e) => {
+                e.currentTarget.style.transform = "translateY(0)";
+                e.currentTarget.style.boxShadow = goldButton.boxShadow;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = "translateY(0)";
+                e.currentTarget.style.boxShadow = goldButton.boxShadow;
+              }}
+            >
+              {loading ? t("creating") : visibility === "private" ? t("createRoom") : t("createAndJoin")}
+            </button>
           </div>
         )}
 

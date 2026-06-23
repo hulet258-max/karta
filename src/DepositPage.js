@@ -5,7 +5,7 @@ import { useSettings } from "./contexts/SettingsContext";
 import { useUser } from "./contexts/UserContext";
 import { socket } from "./socket";
 import CoinAmount from "./CoinAmount";
-import { COIN_BIRR_VALUE, MIN_DEPOSIT_BIRR, MIN_DEPOSIT_COINS, formatBirrValue } from "./utils/money";
+import { MIN_DEPOSIT_BIRR, MIN_DEPOSIT_COINS, coinsToBirr, formatBirrValue } from "./utils/money";
 
 const FALLBACK_PAY_NUMBERS = [{ id: "fallback", phoneNumber: "+251-900-000-000" }];
 
@@ -143,7 +143,7 @@ function DepositPage() {
         type: "success",
         text: data.creditedCoins !== undefined
           ? t(roundedDownBirr > 0 ? "depositCoinsCreditedRounded" : "depositCoinsCredited", {
-              coins: data.creditedCoins,
+              amount: formatBirrValue(data.creditedBirrValue || coinsToBirr(data.creditedCoins)),
               birr: formatBirrValue(data.paidBirr),
               rounded: formatBirrValue(roundedDownBirr),
             })
@@ -405,9 +405,7 @@ function DepositPage() {
         <h2 style={styles.title}><Wallet size={22} style={{ verticalAlign: "-4px", marginRight: "8px" }} />{t("deposit")}</h2>
         <p style={styles.text}>
           {t("depositCoinRule", {
-            birr: MIN_DEPOSIT_BIRR,
-            coins: MIN_DEPOSIT_COINS,
-            rate: COIN_BIRR_VALUE,
+            birr: formatBirrValue(MIN_DEPOSIT_BIRR),
           })}{" "}
           <CoinAmount value={MIN_DEPOSIT_COINS} size={17} />
         </p>

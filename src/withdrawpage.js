@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { useSettings } from "./contexts/SettingsContext";
 import { useUser } from "./contexts/UserContext";
 import CoinAmount from "./CoinAmount";
-import { formatCoins } from "./utils/money";
+import { COIN_BIRR_VALUE, birrToCoins, coinsToBirr, formatCoins, isWholeBirrUnit } from "./utils/money";
 
 function WithdrawPage() {
   const navigate = useNavigate();
@@ -19,6 +19,8 @@ function WithdrawPage() {
   const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000/api";
   const minWithdraw = 1;
   const maxWithdraw = balance;
+  const minWithdrawBirr = coinsToBirr(minWithdraw);
+  const maxWithdrawBirr = coinsToBirr(maxWithdraw);
   const telegramId = user?.telegramId || user?.id;
 
   useEffect(() => {
@@ -57,11 +59,13 @@ function WithdrawPage() {
       return;
     }
 
-    const parsedAmount = Number(amount);
-    if (!Number.isInteger(parsedAmount) || parsedAmount < minWithdraw) {
+    const parsedBirrAmount = Number(amount);
+    if (!isWholeBirrUnit(parsedBirrAmount) || parsedBirrAmount < minWithdrawBirr) {
       setResult({ type: "error", text: t("minWithdrawError", { amount: formatCoins(minWithdraw) }) });
       return;
     }
+
+    const parsedAmount = birrToCoins(parsedBirrAmount);
 
     if (parsedAmount > maxWithdraw) {
       setResult({ type: "error", text: t("withdrawBalanceError") });
@@ -228,9 +232,9 @@ function WithdrawPage() {
           <label style={styles.label}>{t("withdrawAmount")}</label>
           <input
             type="number"
-            min={minWithdraw}
-            max={maxWithdraw}
-            step="1"
+            min={minWithdrawBirr}
+            max={maxWithdrawBirr}
+            step={COIN_BIRR_VALUE}
             value={amount}
             onChange={(event) => setAmount(event.target.value)}
             placeholder={t("withdrawPlaceholder")}

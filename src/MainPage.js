@@ -224,14 +224,14 @@ function MainPage() {
       display: "flex",
       flexDirection: "column",
       alignItems: "center",
-      justifyContent: "flex-start",
+      justifyContent: "space-evenly",
       width: "100%",
       maxWidth: "350px",
       flex: 1,
       minHeight: 0,
-      gap: "clamp(8px, 1.8dvh, 16px)",
+      gap: "clamp(10px, 2.1dvh, 20px)",
       boxSizing: "border-box",
-      paddingTop: "clamp(8px, 2.8dvh, 24px)",
+      paddingTop: "clamp(4px, 1.6dvh, 14px)",
     },
     topBar: {
       position: "absolute",
@@ -245,15 +245,18 @@ function MainPage() {
       gap: "10px",
     },
     profileIconButton: {
-      width: "40px",
-      height: "40px",
-      borderRadius: "50%",
-      padding: 0,
+      width: "58px",
+      height: "34px",
+      borderRadius: "999px",
+      padding: "2px 10px 2px 2px",
       border: `2px solid color-mix(in srgb, ${colors.gold} 72%, transparent)`,
       background: "rgba(0, 0, 0, 0.25)",
-      overflow: "hidden",
       cursor: "pointer",
       boxShadow: "0 6px 14px rgba(0,0,0,0.25)",
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "flex-start",
+      overflow: "hidden",
     },
     topRight: {
       display: "flex",
@@ -264,22 +267,22 @@ function MainPage() {
       color: colors.gold,
       background: "rgba(0, 0, 0, 0.28)",
       border: `1px solid color-mix(in srgb, ${colors.gold} 42%, transparent)`,
-      borderRadius: "8px",
-      padding: "8px 10px",
+      borderRadius: "999px",
+      padding: "7px 11px",
       fontSize: "0.9rem",
       fontWeight: "bold",
       backdropFilter: "blur(5px)",
     },
     settingsButton: {
-      width: "40px",
-      height: "40px",
+      width: "38px",
+      height: "34px",
       display: "inline-flex",
       alignItems: "center",
       justifyContent: "center",
       background: `color-mix(in srgb, ${colors.gold} 12%, transparent)`,
       border: `1px solid color-mix(in srgb, ${colors.gold} 46%, transparent)`,
       color: colors.gold,
-      borderRadius: "8px",
+      borderRadius: "999px",
       padding: 0,
       cursor: "pointer",
       backdropFilter: "blur(5px)",
@@ -465,8 +468,8 @@ function MainPage() {
       padding: "5px 7px",
     }),
     logoWrap: {
-      width: "clamp(120px, 34dvh, 260px)",
-      height: "clamp(120px, 34dvh, 260px)",
+      width: "clamp(122px, 30dvh, 230px)",
+      height: "clamp(122px, 30dvh, 230px)",
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
@@ -507,7 +510,7 @@ function MainPage() {
     },
     actionRow: {
       display: "flex",
-      gap: "20px",
+      gap: "14px",
       width: "100%",
       maxWidth: "350px",
     },
@@ -566,6 +569,18 @@ function MainPage() {
       fontSize: "0.84rem",
       cursor: "pointer",
       whiteSpace: "nowrap",
+    },
+    depositBtn: {
+      background: "linear-gradient(180deg, #56c98f, #248a58)",
+      border: "1px solid rgba(255,255,255,0.24)",
+      boxShadow: "0 10px 22px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.32)",
+      color: "#03140b",
+    },
+    withdrawBtn: {
+      background: "linear-gradient(180deg, #d0ad4d, #987327)",
+      border: "1px solid rgba(255,255,255,0.22)",
+      boxShadow: "0 10px 22px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.32)",
+      color: "#130d02",
     },
     shareBtnDisabled: {
       opacity: 0.68,
@@ -675,7 +690,7 @@ function MainPage() {
           <img
             src={user?.photo || "https://cdn-icons-png.flaticon.com/512/149/149071.png"}
             alt={t("profileView")}
-            style={{ width: "100%", height: "100%", objectFit: "cover" }}
+            style={{ width: 28, height: 28, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }}
           />
         </button>
         <div style={styles.topRight}>
@@ -831,10 +846,10 @@ function MainPage() {
 
         <div style={styles.buttonGroup}>
           <div style={styles.actionRow}>
-            <button style={styles.actionBtnPrimary} onClick={() => navigate("/deposit")}>
+            <button style={{ ...styles.actionBtnPrimary, ...styles.depositBtn }} onClick={() => navigate("/deposit")}>
               {t("deposit")}
             </button>
-            <button style={styles.actionBtnPrimary} onClick={() => navigate("/withdraw")}>
+            <button style={{ ...styles.actionBtnPrimary, ...styles.withdrawBtn }} onClick={() => navigate("/withdraw")}>
               {t("withdraw")}
             </button>
           </div>

@@ -10,6 +10,7 @@ import DepositPage from "./DepositPage";
 import WithdrawPage from "./withdrawpage";
 import SplashScreen from "./SplashScreen";
 import CoinAmount from "./CoinAmount";
+import { formatCoins } from "./utils/money";
 
 function getSharedRoomId() {
   const tg = window.Telegram?.WebApp;
@@ -89,10 +90,18 @@ function WelcomeGiftPopup() {
       background: "rgba(241,196,15,0.13)",
       border: "1px solid rgba(241,196,15,0.32)",
     },
-    coin: {
+    birrBadge: {
       width: "58px",
       height: "58px",
-      objectFit: "contain",
+      borderRadius: "50%",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      background: "linear-gradient(180deg, #f1c40f, #d4af37)",
+      color: ui.colors.textDark,
+      fontWeight: 900,
+      fontSize: "1.3rem",
+      boxShadow: "inset 0 1px 0 rgba(255,255,255,0.45), 0 6px 18px rgba(0,0,0,0.26)",
     },
     title: {
       margin: "0 0 8px",
@@ -127,10 +136,10 @@ function WelcomeGiftPopup() {
     <div style={styles.backdrop} role="dialog" aria-modal="true" aria-labelledby="welcome-gift-title">
       <div style={styles.panel}>
         <div style={styles.iconWrap}>
-          <img src="/coin.png" alt="" aria-hidden="true" style={styles.coin} />
+          <div aria-hidden="true" style={styles.birrBadge}>Br</div>
         </div>
         <h2 id="welcome-gift-title" style={styles.title}>{t("welcomeGiftTitle")}</h2>
-        <p style={styles.text}>{t("welcomeGiftText", { amount: giftCoins })}</p>
+        <p style={styles.text}>{t("welcomeGiftText", { amount: formatCoins(giftCoins) })}</p>
         <CoinAmount value={giftCoins} size={22} style={styles.amount} />
         <button type="button" style={styles.button} onClick={dismissFirstRunGift}>
           {t("welcomeGiftButton")}

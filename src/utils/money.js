@@ -11,7 +11,7 @@ export function toWholeCoins(value) {
 
 export function formatCoins(value) {
   const coins = toWholeCoins(value);
-  return `${coins} ${coins === 1 ? "coin" : "coins"}`;
+  return formatBirrValue(coinsToBirr(coins));
 }
 
 export function formatBirr(value) {
@@ -21,4 +21,18 @@ export function formatBirr(value) {
 export function formatBirrValue(value) {
   const amount = Number(value || 0);
   return `${amount.toFixed(Number.isInteger(amount) ? 0 : 2)} Birr`;
+}
+
+export function coinsToBirr(coins) {
+  return toWholeCoins(coins) * COIN_BIRR_VALUE;
+}
+
+export function birrToCoins(birr) {
+  const amount = Number(birr || 0);
+  return Math.floor(amount / COIN_BIRR_VALUE);
+}
+
+export function isWholeBirrUnit(birr) {
+  const amount = Number(birr || 0);
+  return Number.isInteger(amount) && amount % COIN_BIRR_VALUE === 0;
 }
