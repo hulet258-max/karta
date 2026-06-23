@@ -1,13 +1,12 @@
-export const sharePreparedTelegramMessage = (tg, preparedMessageId) => {
+export const sharePreparedTelegramMessage = (tg, preparedMessageId, handlers = {}) => {
   if (!tg || typeof tg.shareMessage !== "function" || !preparedMessageId) {
     return false;
   }
 
   try {
     tg.shareMessage(preparedMessageId, (sent) => {
-      if (sent === false) {
-        console.warn("Telegram prepared message share was not sent.");
-      }
+      if (sent === false) handlers.onCanceled?.();
+      else handlers.onSent?.();
     });
     return true;
   } catch (error) {

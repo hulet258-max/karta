@@ -1,10 +1,12 @@
 import React, { useState } from "react";
-import { Globe2, Lock, X } from "lucide-react";
+import { Globe2, Lock, Play, Send, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useSettings } from "./contexts/SettingsContext";
 import { useUser } from "./contexts/UserContext";
 import CoinAmount from "./CoinAmount";
 import { MIN_ROOM_ENTRY_COINS } from "./utils/money";
+import ShareToast from "./ShareToast";
+import TinySpinner from "./TinySpinner";
 import { sharePreparedTelegramMessage, switchTelegramInlineQuery } from "./utils/telegramShare";
 import { socket } from "./socket"; // 🔌 Import your socket instance
 
@@ -18,8 +20,12 @@ function RoomCreate({ onClose, onRoomCreated }) {
   const [entryFee, setEntryFee] = useState(String(MIN_ROOM_ENTRY_COINS));
   const [visibility, setVisibility] = useState("public");
   const [createdRoomId, setCreatedRoomId] = useState("");
+  const [createdRoom, setCreatedRoom] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [shareLoading, setShareLoading] = useState(false);
+  const [goToGameLoading, setGoToGameLoading] = useState(false);
   const [error, setError] = useState("");
+  const [shareToast, setShareToast] = useState(null);
 
   const handleJoinRoom = async (roomId) => {
     const joinRes = await fetch(`${BASE_URL}/join-room`, {
@@ -51,11 +57,24 @@ function RoomCreate({ onClose, onRoomCreated }) {
   };
 
   const handleTelegramShare = async () => {
-    if (!createdRoomId) return;
+    if (!createdRoomId || shareLoading) return;
 
     setError("");
+    setShareLoading(true);
     const fallbackQuery = `join_room_${createdRoomId}`;
     const tg = window.Telegram?.WebApp;
+    const shareRoom = createdRoom || {};
+    const shareContent = [
+      shareRoom.name || roomName.trim() || "Private Karta game",
+      `${Number(shareRoom.playerCount || 0)}/${Number(shareRoom.maxPlayers || 0) || "?"} ${t("players")}`,
+      `${Number(shareRoom.entryFee || entryFee || 0)} ${t("coins")}`,
+    ].join(" · ");
+    const showShareToast = (type, messageKey) => {
+      setShareToast({
+        type,
+        title: t(messageKey, { content: shareContent }),
+      });
+    };
 
     try {
       const response = await fetch(`${BASE_URL}/share/private-room`, {
@@ -72,18 +91,42 @@ function RoomCreate({ onClose, onRoomCreated }) {
         throw new Error(data.error || t("shareTelegramUnavailable"));
       }
 
-      if (sharePreparedTelegramMessage(tg, data.preparedMessageId)) {
+      if (
+        sharePreparedTelegramMessage(tg, data.preparedMessageId, {
+          onSent: () => showShareToast("success", "telegramShareSent"),
+          onCanceled: () => showShareToast("info", "telegramShareCanceled"),
+        })
+      ) {
         return;
       }
 
       if (switchTelegramInlineQuery(tg, data.fallbackQuery || fallbackQuery)) {
+        showShareToast("info", "telegramShareFallbackOpened");
         return;
       }
     } catch (shareError) {
       console.warn("Telegram private room share failed:", shareError);
+      showShareToast("error", "telegramShareCanceled");
+    } finally {
+      setShareLoading(false);
     }
 
     setError(t("shareTelegramUnavailable"));
+  };
+
+  const handleGoToGame = async () => {
+    if (!createdRoomId || goToGameLoading) return;
+
+    setGoToGameLoading(true);
+    setError("");
+    try {
+      await handleJoinRoom(createdRoomId);
+    } catch (goError) {
+      console.error("Error opening private room:", goError);
+      setError(goError.message || t("failedToJoinRoom"));
+    } finally {
+      setGoToGameLoading(false);
+    }
   };
 
   const handleCreate = async () => {
@@ -135,6 +178,7 @@ function RoomCreate({ onClose, onRoomCreated }) {
       }
 
       setCreatedRoomId(createData.room.id);
+      setCreatedRoom(createData.room);
     } catch (err) {
       console.error("Error in room creation process:", err);
       setError(err.message);
@@ -320,6 +364,25 @@ function RoomCreate({ onClose, onRoomCreated }) {
       fontSize: "0.8rem",
       boxShadow: "0 14px 26px rgba(0,0,0,0.24), 0 0 22px rgba(49,172,238,0.18), inset 0 1px 0 rgba(255,255,255,0.38)",
     },
+    goToGameBtn: {
+      width: "100%",
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: "6px",
+      ...goldButton,
+      borderRadius: "10px",
+      padding: "10px",
+      color: colors.textDark,
+      fontWeight: "bold",
+      cursor: "pointer",
+      fontSize: "0.8rem",
+    },
+    buttonDisabled: {
+      opacity: 0.66,
+      cursor: "wait",
+      filter: "saturate(0.82)",
+    },
     createBtn: {
       width: "100%",
       display: "inline-flex",
@@ -344,6 +407,8 @@ function RoomCreate({ onClose, onRoomCreated }) {
 
   return (
     <div style={styles.overlay} onClick={onClose}>
+      <ShareToast toast={shareToast} onClose={() => setShareToast(null)} />
+
       <div style={styles.popupContent} onClick={(e) => e.stopPropagation()}>
         
         <div style={styles.header}>
@@ -459,8 +524,21 @@ function RoomCreate({ onClose, onRoomCreated }) {
 
         {privateRoomCreated && (
           <div style={styles.privateLinkBox}>
-            <button style={styles.telegramBtn} onClick={handleTelegramShare}>
-              {t("shareTelegram")}
+            <button
+              style={{ ...styles.telegramBtn, ...(shareLoading ? styles.buttonDisabled : {}) }}
+              onClick={handleTelegramShare}
+              disabled={shareLoading || goToGameLoading}
+            >
+              {shareLoading ? <TinySpinner size={15} /> : <Send size={15} />}
+              {shareLoading ? t("preparingTelegramShare") : t("shareTelegram")}
+            </button>
+            <button
+              style={{ ...styles.goToGameBtn, ...(goToGameLoading ? styles.buttonDisabled : {}) }}
+              onClick={handleGoToGame}
+              disabled={shareLoading || goToGameLoading}
+            >
+              {goToGameLoading ? <TinySpinner size={15} /> : <Play size={15} />}
+              {goToGameLoading ? t("joining") : t("goToGame")}
             </button>
           </div>
         )}

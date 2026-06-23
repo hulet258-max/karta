@@ -1,12 +1,12 @@
 import React, { useState } from "react";
-import { XCircle } from "lucide-react";
+import { Lock, XCircle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useSettings } from "./contexts/SettingsContext";
 import { socket } from "./socket";
 import CoinAmount from "./CoinAmount";
 import { formatCoins } from "./utils/money";
 
-function JoinConfirmation({ room, user, onClose }) {
+function JoinConfirmation({ room, user, onClose, isPrivateShare = false }) {
   const navigate = useNavigate();
   const { t, ui } = useSettings();
   const [loading, setLoading] = useState(false);
@@ -16,6 +16,7 @@ function JoinConfirmation({ room, user, onClose }) {
   if (!room || !user) return null;
 
   const canJoin = (user.balance || 0) >= room.entryFee;
+  const isPrivateGame = isPrivateShare || room.visibility === "private";
 
   const handleConfirm = async () => {
     if (!canJoin) return;
@@ -71,6 +72,10 @@ function JoinConfirmation({ room, user, onClose }) {
     }
 
     setLoading(false);
+  };
+
+  const handleDeposit = () => {
+    navigate("/deposit");
   };
 
   const { colors, glassPanel, goldButton } = ui;
@@ -140,6 +145,19 @@ function JoinConfirmation({ room, user, onClose }) {
       textAlign: "center",
       lineHeight: "1.4",
     },
+    privateWarning: {
+      display: "flex",
+      alignItems: "flex-start",
+      gap: "8px",
+      margin: "0 0 12px",
+      padding: "10px",
+      borderRadius: "8px",
+      background: "rgba(255,246,94,0.1)",
+      border: "1px solid rgba(255,246,94,0.22)",
+      color: colors.cream,
+      fontSize: "0.75rem",
+      lineHeight: 1.35,
+    },
     errorText: {
       color: "#e74c3c",
       fontWeight: "bold",
@@ -172,16 +190,16 @@ function JoinConfirmation({ room, user, onClose }) {
       alignItems: "center",
       justifyContent: "center",
       gap: "7px",
-      ...(canJoin ? goldButton : {}),
-      background: canJoin ? goldButton.background : "rgba(255, 255, 255, 0.1)",
-      border: canJoin ? goldButton.border : "1px solid rgba(255, 255, 255, 0.2)",
+      ...goldButton,
+      background: goldButton.background,
+      border: goldButton.border,
       borderRadius: "8px",
       padding: "10px",
-      color: canJoin ? colors.textDark : "rgba(255, 255, 255, 0.5)",
+      color: colors.textDark,
       fontWeight: "bold",
       fontSize: "0.85rem",
-      cursor: canJoin ? "pointer" : "not-allowed",
-      boxShadow: canJoin ? goldButton.boxShadow : "none",
+      cursor: "pointer",
+      boxShadow: goldButton.boxShadow,
       transition: "transform 0.1s",
     },
   };
@@ -190,10 +208,26 @@ function JoinConfirmation({ room, user, onClose }) {
     <div style={styles.overlay} onClick={onClose}>
       <div style={styles.popupContent} onClick={(e) => e.stopPropagation()}>
         <div style={styles.header}>
-          <h3 style={styles.title}>{t("confirmJoinTitle", { room: room.name })}</h3>
+          <h3 style={styles.title}>
+            {isPrivateGame ? t("privateGameJoinTitle") : t("confirmJoinTitle", { room: room.name })}
+          </h3>
         </div>
 
         <div style={styles.detailsBox}>
+          {isPrivateGame && (
+            <div style={styles.privateWarning}>
+              <Lock size={16} style={{ color: colors.gold, flexShrink: 0, marginTop: "1px" }} />
+              <span>{t("privateGameJoinWarning")}</span>
+            </div>
+          )}
+
+          {isPrivateGame && (
+            <p style={styles.row}>
+              <span>{t("roomName")}:</span>
+              <span style={styles.value}>{room.name}</span>
+            </p>
+          )}
+
           <p style={styles.row}>
             <span>{t("entryFeeLabel")}:</span>
             <span style={styles.value}><CoinAmount value={room.entryFee} /></span>
@@ -228,25 +262,22 @@ function JoinConfirmation({ room, user, onClose }) {
 
           <button
             style={styles.confirmBtn}
-            onClick={handleConfirm}
-            disabled={!canJoin || loading}
+            onClick={canJoin ? handleConfirm : handleDeposit}
+            disabled={loading}
             onMouseDown={(e) => {
-              if (!canJoin) return;
               e.currentTarget.style.transform = "translateY(1px) scale(0.985)";
               e.currentTarget.style.boxShadow = "0 8px 18px rgba(0,0,0,0.24), inset 0 1px 0 rgba(255,255,255,0.5)";
             }}
             onMouseUp={(e) => {
-              if (!canJoin) return;
               e.currentTarget.style.transform = "translateY(0)";
               e.currentTarget.style.boxShadow = goldButton.boxShadow;
             }}
             onMouseLeave={(e) => {
-              if (!canJoin) return;
               e.currentTarget.style.transform = "translateY(0)";
               e.currentTarget.style.boxShadow = goldButton.boxShadow;
             }}
           >
-            {loading ? t("joining") : t("confirmAndJoin")}
+            {loading ? t("joining") : canJoin ? t("confirmAndJoin") : t("depositToJoin")}
           </button>
         </div>
       </div>

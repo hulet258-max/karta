@@ -6,6 +6,8 @@ import { useSettings } from "./contexts/SettingsContext";
 import { useUser } from "./contexts/UserContext";
 import { socket } from "./socket";
 import CoinAmount from "./CoinAmount";
+import ShareToast from "./ShareToast";
+import TinySpinner from "./TinySpinner";
 import { sharePreparedTelegramMessage, switchTelegramInlineQuery } from "./utils/telegramShare";
 
 function MainPage() {
@@ -18,6 +20,8 @@ function MainPage() {
   const [profileName, setProfileName] = useState("");
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState("");
+  const [shareLoading, setShareLoading] = useState(false);
+  const [shareToast, setShareToast] = useState(null);
   const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000/api";
 
   useEffect(() => {
@@ -40,6 +44,17 @@ function MainPage() {
   }, []);
 
   const handleShare = async () => {
+    if (shareLoading) return;
+
+    const content = t("shareInviteText");
+    const showShareToast = (type, messageKey) => {
+      setShareToast({
+        type,
+        title: t(messageKey, { content }),
+      });
+    };
+
+    setShareLoading(true);
     try {
       let shareUrl = window.location.origin;
       let referralCode = "";
@@ -72,26 +87,38 @@ function MainPage() {
       const telegramShareUrl = `https://t.me/share/url?url=${encodeURIComponent(shareData.url)}&text=${encodeURIComponent(shareData.text)}`;
       const tg = window.Telegram?.WebApp;
 
-      if (sharePreparedTelegramMessage(tg, preparedMessageId)) {
+      if (
+        sharePreparedTelegramMessage(tg, preparedMessageId, {
+          onSent: () => showShareToast("success", "telegramShareSent"),
+          onCanceled: () => showShareToast("info", "telegramShareCanceled"),
+        })
+      ) {
         return;
       }
 
       if (switchTelegramInlineQuery(tg, fallbackQuery || (referralCode ? `ref_${referralCode}` : ""))) {
+        showShareToast("info", "telegramShareFallbackOpened");
         return;
       }
 
       if (tg?.openTelegramLink) {
         tg.openTelegramLink(telegramShareUrl);
+        showShareToast("info", "telegramShareFallbackOpened");
         return;
       }
 
       if (navigator.share) {
         await navigator.share(shareData);
+        showShareToast("success", "telegramShareSent");
         return;
       }
       await navigator.clipboard.writeText(shareData.url);
+      showShareToast("success", "telegramShareSent");
     } catch (error) {
       console.error("Share failed:", error);
+      showShareToast("error", "telegramShareCanceled");
+    } finally {
+      setShareLoading(false);
     }
   };
 
@@ -540,6 +567,11 @@ function MainPage() {
       cursor: "pointer",
       whiteSpace: "nowrap",
     },
+    shareBtnDisabled: {
+      opacity: 0.68,
+      cursor: "wait",
+      filter: "saturate(0.85)",
+    },
     actionBtnPrimary: {
       flex: 1,
       display: "inline-flex",
@@ -629,6 +661,8 @@ function MainPage() {
 
   return (
     <div style={styles.container}>
+      <ShareToast toast={shareToast} onClose={() => setShareToast(null)} />
+
       <div style={styles.bgCards}>
         <div style={styles.bgCard("14%", "7%", -17)}>A</div>
         <div style={styles.bgCard("28%", "82%", 14, 0.18)}>K</div>
@@ -785,8 +819,13 @@ function MainPage() {
             </span>
             <span>{t("shareReward")}</span>
           </div>
-          <button style={styles.shareBtn} onClick={handleShare}>
-            {t("share")}
+          <button
+            style={{ ...styles.shareBtn, ...(shareLoading ? styles.shareBtnDisabled : {}) }}
+            onClick={handleShare}
+            disabled={shareLoading}
+          >
+            {shareLoading && <TinySpinner size={14} />}
+            {shareLoading ? t("preparingTelegramShare") : t("share")}
           </button>
         </div>
 

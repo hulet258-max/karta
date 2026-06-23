@@ -145,6 +145,19 @@ function GamePage() {
 
     const resumeGame = async () => {
       try {
+        const roomResponse = await fetch(`${BASE_URL}/room/${encodeURIComponent(routeRoomId)}`);
+        const roomInfo = await roomResponse.json().catch(() => ({}));
+        const routeRoom = roomInfo?.room;
+        const routeRoomPlayers = (routeRoom?.players || []).map(String);
+        if (
+          roomResponse.ok &&
+          routeRoom?.visibility === "private" &&
+          !routeRoomPlayers.includes(String(user.telegramId))
+        ) {
+          navigate(`/second?roomId=${encodeURIComponent(routeRoomId)}&privateShare=1`, { replace: true });
+          return;
+        }
+
         const response = await fetch(`${BASE_URL}/join-room`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },

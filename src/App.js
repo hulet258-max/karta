@@ -22,7 +22,7 @@ function getSharedRoomId() {
 function LaunchRoute() {
   const roomId = getSharedRoomId();
   return roomId
-    ? <Navigate to={`/game/${encodeURIComponent(roomId)}`} replace />
+    ? <Navigate to={`/second?roomId=${encodeURIComponent(roomId)}&privateShare=1`} replace />
     : <MainPage />;
 }
 

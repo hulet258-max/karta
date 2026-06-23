@@ -21,6 +21,7 @@ function SecondPage() {
   const [activeSlide, setActiveSlide] = useState(0);
   const [posterSlides, setPosterSlides] = useState([]);
   const [botStarting, setBotStarting] = useState(false);
+  const isPrivateShareLaunch = new URLSearchParams(location.search).get("privateShare") === "1";
 
   const fallbackSlides = useMemo(() => [
     { image: "/a.png", alt: t("kartaBannerAlt", { number: 1 }) },
@@ -218,6 +219,13 @@ function SecondPage() {
       return;
     }
     setSelectedRoom(room);
+  };
+
+  const closeSelectedRoom = () => {
+    setSelectedRoom(null);
+    if (new URLSearchParams(location.search).get("roomId")) {
+      navigate("/second", { replace: true });
+    }
   };
 
   const handlePlayWithBot = async () => {
@@ -949,7 +957,8 @@ function SecondPage() {
         <JoinConfirmation
           room={selectedRoom}
           user={user}
-          onClose={() => setSelectedRoom(null)}
+          isPrivateShare={isPrivateShareLaunch}
+          onClose={closeSelectedRoom}
         />
       )}
     </div>
