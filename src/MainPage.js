@@ -7,6 +7,17 @@ import { useUser } from "./contexts/UserContext";
 import { socket } from "./socket";
 import CoinAmount from "./CoinAmount";
 
+const buildTelegramInlineQuery = (message, token) => {
+  const cleanToken = String(token || "").trim();
+  const cleanMessage = String(message || "").replace(/\s+/g, " ").trim();
+  const maxMessageLength = Math.max(0, 255 - cleanToken.length);
+  const visibleMessage =
+    cleanMessage.length > maxMessageLength
+      ? cleanMessage.slice(0, maxMessageLength).trim()
+      : cleanMessage;
+  return `${visibleMessage} ${cleanToken}`.trim();
+};
+
 function MainPage() {
   const navigate = useNavigate();
   const { user, loading, refreshUser } = useUser();
@@ -68,7 +79,10 @@ function MainPage() {
       const tg = window.Telegram?.WebApp;
 
       if (referralCode && tg?.switchInlineQuery) {
-        tg.switchInlineQuery(`ref_${referralCode}`, ["users", "groups"]);
+        tg.switchInlineQuery(
+          buildTelegramInlineQuery(t("shareInviteText"), `ref_${referralCode}`),
+          ["users", "groups"]
+        );
         return;
       }
 

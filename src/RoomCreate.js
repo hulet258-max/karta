@@ -7,6 +7,17 @@ import CoinAmount from "./CoinAmount";
 import { MIN_ROOM_ENTRY_COINS } from "./utils/money";
 import { socket } from "./socket"; // 🔌 Import your socket instance
 
+const buildTelegramInlineQuery = (message, token) => {
+  const cleanToken = String(token || "").trim();
+  const cleanMessage = String(message || "").replace(/\s+/g, " ").trim();
+  const maxMessageLength = Math.max(0, 255 - cleanToken.length);
+  const visibleMessage =
+    cleanMessage.length > maxMessageLength
+      ? cleanMessage.slice(0, maxMessageLength).trim()
+      : cleanMessage;
+  return `${visibleMessage} ${cleanToken}`.trim();
+};
+
 function RoomCreate({ onClose, onRoomCreated }) {
   const { user } = useUser();
   const { t, ui } = useSettings();
@@ -53,12 +64,15 @@ function RoomCreate({ onClose, onRoomCreated }) {
     if (!createdRoomId) return;
 
     setError("");
-    const inlineQuery = `join_room_${createdRoomId}`;
+    const roomLabel = roomName.trim()
+      ? `Join my private Karta game: ${roomName.trim()}`
+      : "Join my private Karta game";
+    const inlineQuery = buildTelegramInlineQuery(roomLabel, `join_room_${createdRoomId}`);
     const tg = window.Telegram?.WebApp;
 
     try {
       if (tg?.switchInlineQuery) {
-        tg.switchInlineQuery(inlineQuery, ["users"]);
+        tg.switchInlineQuery(inlineQuery, ["users", "groups"]);
         return;
       }
     } catch (shareError) {
