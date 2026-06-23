@@ -6,17 +6,7 @@ import { useSettings } from "./contexts/SettingsContext";
 import { useUser } from "./contexts/UserContext";
 import { socket } from "./socket";
 import CoinAmount from "./CoinAmount";
-
-const buildTelegramInlineQuery = (message, token) => {
-  const cleanToken = String(token || "").trim();
-  const cleanMessage = String(message || "").replace(/\s+/g, " ").trim();
-  const maxMessageLength = Math.max(0, 255 - cleanToken.length);
-  const visibleMessage =
-    cleanMessage.length > maxMessageLength
-      ? cleanMessage.slice(0, maxMessageLength).trim()
-      : cleanMessage;
-  return `${visibleMessage} ${cleanToken}`.trim();
-};
+import { sharePreparedTelegramMessage, switchTelegramInlineQuery } from "./utils/telegramShare";
 
 function MainPage() {
   const navigate = useNavigate();
@@ -53,8 +43,10 @@ function MainPage() {
     try {
       let shareUrl = window.location.origin;
       let referralCode = "";
+      let fallbackQuery = "";
+      let preparedMessageId = "";
       if (user?.telegramId || user?.id) {
-        const response = await fetch(`${API_BASE_URL}/referral-link`, {
+        const response = await fetch(`${API_BASE_URL}/share/referral`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -67,6 +59,8 @@ function MainPage() {
         if (response.ok && data.success && data.link) {
           shareUrl = data.link;
           referralCode = data.code || "";
+          fallbackQuery = data.fallbackQuery || (data.code ? `ref_${data.code}` : "");
+          preparedMessageId = data.preparedMessageId || "";
         }
       }
 
@@ -78,11 +72,11 @@ function MainPage() {
       const telegramShareUrl = `https://t.me/share/url?url=${encodeURIComponent(shareData.url)}&text=${encodeURIComponent(shareData.text)}`;
       const tg = window.Telegram?.WebApp;
 
-      if (referralCode && tg?.switchInlineQuery) {
-        tg.switchInlineQuery(
-          buildTelegramInlineQuery(t("shareInviteText"), `ref_${referralCode}`),
-          ["users", "groups"]
-        );
+      if (sharePreparedTelegramMessage(tg, preparedMessageId)) {
+        return;
+      }
+
+      if (switchTelegramInlineQuery(tg, fallbackQuery || (referralCode ? `ref_${referralCode}` : ""))) {
         return;
       }
 

@@ -5,18 +5,8 @@ import { useSettings } from "./contexts/SettingsContext";
 import { useUser } from "./contexts/UserContext";
 import CoinAmount from "./CoinAmount";
 import { MIN_ROOM_ENTRY_COINS } from "./utils/money";
+import { sharePreparedTelegramMessage, switchTelegramInlineQuery } from "./utils/telegramShare";
 import { socket } from "./socket"; // 🔌 Import your socket instance
-
-const buildTelegramInlineQuery = (message, token) => {
-  const cleanToken = String(token || "").trim();
-  const cleanMessage = String(message || "").replace(/\s+/g, " ").trim();
-  const maxMessageLength = Math.max(0, 255 - cleanToken.length);
-  const visibleMessage =
-    cleanMessage.length > maxMessageLength
-      ? cleanMessage.slice(0, maxMessageLength).trim()
-      : cleanMessage;
-  return `${visibleMessage} ${cleanToken}`.trim();
-};
 
 function RoomCreate({ onClose, onRoomCreated }) {
   const { user } = useUser();
@@ -60,23 +50,37 @@ function RoomCreate({ onClose, onRoomCreated }) {
     });
   };
 
-  const handleTelegramShare = () => {
+  const handleTelegramShare = async () => {
     if (!createdRoomId) return;
 
     setError("");
-    const roomLabel = roomName.trim()
-      ? `Join my private Karta game: ${roomName.trim()}`
-      : "Join my private Karta game";
-    const inlineQuery = buildTelegramInlineQuery(roomLabel, `join_room_${createdRoomId}`);
+    const fallbackQuery = `join_room_${createdRoomId}`;
     const tg = window.Telegram?.WebApp;
 
     try {
-      if (tg?.switchInlineQuery) {
-        tg.switchInlineQuery(inlineQuery, ["users", "groups"]);
+      const response = await fetch(`${BASE_URL}/share/private-room`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: user?.telegramId || user?.id,
+          roomId: createdRoomId,
+          botUsername: process.env.REACT_APP_BOT_USERNAME,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || t("shareTelegramUnavailable"));
+      }
+
+      if (sharePreparedTelegramMessage(tg, data.preparedMessageId)) {
+        return;
+      }
+
+      if (switchTelegramInlineQuery(tg, data.fallbackQuery || fallbackQuery)) {
         return;
       }
     } catch (shareError) {
-      console.warn("Telegram inline share failed:", shareError);
+      console.warn("Telegram private room share failed:", shareError);
     }
 
     setError(t("shareTelegramUnavailable"));
