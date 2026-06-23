@@ -28,6 +28,9 @@ function RoomCreate({ onClose, onRoomCreated }) {
   const [error, setError] = useState("");
   const [shareToast, setShareToast] = useState(null);
   const [sharedTo, setSharedTo] = useState("");
+  const [playerProfiles, setPlayerProfiles] = useState({});
+  const createdRoomPlayerIds = (createdRoom?.players || []).map(String).filter(Boolean);
+  const createdRoomPlayerIdsKey = createdRoomPlayerIds.join("|");
 
   useEffect(() => {
     if (!createdRoomId) return undefined;
@@ -53,6 +56,40 @@ function RoomCreate({ onClose, onRoomCreated }) {
       socket.off("room_deleted", handleRoomDeleted);
     };
   }, [createdRoomId, t]);
+
+  useEffect(() => {
+    const playerIds = [...new Set(createdRoomPlayerIdsKey ? createdRoomPlayerIdsKey.split("|") : [])];
+    if (!playerIds.length) {
+      setPlayerProfiles({});
+      return undefined;
+    }
+
+    let isCancelled = false;
+    const loadPlayerProfiles = async () => {
+      try {
+        const response = await fetch(`${BASE_URL}/users/public`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userIds: playerIds }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) return;
+        if (isCancelled) return;
+        const profiles = {};
+        (data.users || []).forEach((profile) => {
+          profiles[String(profile.telegramId)] = profile;
+        });
+        setPlayerProfiles(profiles);
+      } catch (profileError) {
+        console.warn("Could not load room player names:", profileError);
+      }
+    };
+
+    loadPlayerProfiles();
+    return () => {
+      isCancelled = true;
+    };
+  }, [BASE_URL, createdRoomPlayerIdsKey]);
 
   const handleJoinRoom = async (roomId) => {
     const joinRes = await fetch(`${BASE_URL}/join-room`, {
@@ -225,10 +262,26 @@ function RoomCreate({ onClose, onRoomCreated }) {
 
   const { colors, glassPanel, field: glassField, goldButton } = ui;
   const privateRoomCreated = visibility === "private" && createdRoomId;
-  const playerList = (createdRoom?.players || []).map(String);
+  const playerList = createdRoomPlayerIds;
   const privateRoomPlayerCount = Number(createdRoom?.playerCount || playerList.length || 0);
   const privateRoomMaxPlayers = Number(createdRoom?.maxPlayers || 0);
   const canGoToGame = privateRoomCreated && privateRoomMaxPlayers > 0 && privateRoomPlayerCount >= privateRoomMaxPlayers;
+  const currentUserId = String(user?.telegramId || user?.id || "");
+  const currentUserName = user?.displayName || user?.firstName || (user?.username ? `@${user.username}` : "");
+  const getPlayerDisplayName = (playerId) => {
+    const normalizedId = String(playerId || "");
+    const publicProfile = playerProfiles[normalizedId];
+    const profileName = publicProfile?.displayName
+      || (publicProfile?.username ? `@${publicProfile.username}` : "")
+      || publicProfile?.firstName
+      || "";
+
+    if (normalizedId === currentUserId) {
+      return currentUserName ? `${currentUserName} (${t("you")})` : t("you");
+    }
+
+    return profileName || `${t("player")} ${normalizedId.slice(-4)}`;
+  };
 
   const styles = {
     overlay: {
@@ -614,7 +667,7 @@ function RoomCreate({ onClose, onRoomCreated }) {
             <div style={styles.playerList}>
               {playerList.length ? playerList.map((playerId, index) => (
                 <div style={styles.playerPill} key={`${playerId}-${index}`}>
-                  {index + 1}. {String(playerId) === String(user?.telegramId || user?.id) ? t("you") : playerId}
+                  {index + 1}. {getPlayerDisplayName(playerId)}
                 </div>
               )) : (
                 <div style={styles.playerPill}>{t("waitingForPlayersToJoin")}</div>

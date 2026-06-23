@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Gift, Settings, Volume2, VolumeX, UserCircle, X } from "lucide-react";
+import { Download, Gift, Play, Send, Settings, Upload, Volume2, VolumeX, UserCircle, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import logog from "./logo.png";
 import { useSettings } from "./contexts/SettingsContext";
@@ -22,6 +22,7 @@ function MainPage() {
   const [profileError, setProfileError] = useState("");
   const [shareLoading, setShareLoading] = useState(false);
   const [shareToast, setShareToast] = useState(null);
+  const profileButtonName = user?.displayName || user?.firstName || (user?.username ? `@${user.username}` : t("user"));
   const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000/api";
 
   useEffect(() => {
@@ -224,12 +225,12 @@ function MainPage() {
       display: "flex",
       flexDirection: "column",
       alignItems: "center",
-      justifyContent: "space-evenly",
+      justifyContent: "center",
       width: "100%",
       maxWidth: "350px",
       flex: 1,
       minHeight: 0,
-      gap: "clamp(10px, 2.1dvh, 20px)",
+      gap: "clamp(7px, 1.2dvh, 12px)",
       boxSizing: "border-box",
       paddingTop: "clamp(4px, 1.6dvh, 14px)",
     },
@@ -245,8 +246,9 @@ function MainPage() {
       gap: "10px",
     },
     profileIconButton: {
-      width: "58px",
-      height: "34px",
+      minWidth: "104px",
+      maxWidth: "150px",
+      height: "30px",
       borderRadius: "999px",
       padding: "2px 10px 2px 2px",
       border: `2px solid color-mix(in srgb, ${colors.gold} 72%, transparent)`,
@@ -256,7 +258,18 @@ function MainPage() {
       display: "inline-flex",
       alignItems: "center",
       justifyContent: "flex-start",
+      gap: "7px",
       overflow: "hidden",
+    },
+    profileButtonName: {
+      minWidth: 0,
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      whiteSpace: "nowrap",
+      color: colors.cream,
+      fontSize: "0.76rem",
+      fontWeight: 900,
+      lineHeight: 1,
     },
     topRight: {
       display: "flex",
@@ -519,7 +532,7 @@ function MainPage() {
       maxWidth: "350px",
       display: "flex",
       flexDirection: "column",
-      gap: "clamp(8px, 1.5dvh, 14px)",
+      gap: "clamp(7px, 1.1dvh, 10px)",
     },
     shareCard: {
       width: "100%",
@@ -527,9 +540,9 @@ function MainPage() {
       display: "flex",
       alignItems: "center",
       justifyContent: "space-between",
-      gap: "14px",
-      padding: "clamp(10px, 1.8dvh, 14px)",
-      minHeight: "clamp(58px, 9dvh, 78px)",
+      gap: "10px",
+      padding: "clamp(9px, 1.5dvh, 12px)",
+      minHeight: "clamp(54px, 7.6dvh, 68px)",
       boxSizing: "border-box",
       borderRadius: "10px",
       ...glassPanel,
@@ -571,16 +584,12 @@ function MainPage() {
       whiteSpace: "nowrap",
     },
     depositBtn: {
-      background: "linear-gradient(180deg, #56c98f, #248a58)",
-      border: "1px solid rgba(255,255,255,0.24)",
-      boxShadow: "0 10px 22px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.32)",
-      color: "#03140b",
+      ...goldButton,
+      color: colors.textDark,
     },
     withdrawBtn: {
-      background: "linear-gradient(180deg, #d0ad4d, #987327)",
-      border: "1px solid rgba(255,255,255,0.22)",
-      boxShadow: "0 10px 22px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.32)",
-      color: "#130d02",
+      ...goldButton,
+      color: colors.textDark,
     },
     shareBtnDisabled: {
       opacity: 0.68,
@@ -690,8 +699,9 @@ function MainPage() {
           <img
             src={user?.photo || "https://cdn-icons-png.flaticon.com/512/149/149071.png"}
             alt={t("profileView")}
-            style={{ width: 28, height: 28, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }}
+            style={{ width: 24, height: 24, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }}
           />
+          <span style={styles.profileButtonName}>{profileButtonName}</span>
         </button>
         <div style={styles.topRight}>
           <span style={styles.balancePill}>
@@ -840,6 +850,7 @@ function MainPage() {
             disabled={shareLoading}
           >
             {shareLoading && <TinySpinner size={14} />}
+            {!shareLoading && <Send size={14} />}
             {shareLoading ? t("preparingTelegramShare") : t("share")}
           </button>
         </div>
@@ -847,9 +858,11 @@ function MainPage() {
         <div style={styles.buttonGroup}>
           <div style={styles.actionRow}>
             <button style={{ ...styles.actionBtnPrimary, ...styles.depositBtn }} onClick={() => navigate("/deposit")}>
+              <Download size={15} />
               {t("deposit")}
             </button>
             <button style={{ ...styles.actionBtnPrimary, ...styles.withdrawBtn }} onClick={() => navigate("/withdraw")}>
+              <Upload size={15} />
               {t("withdraw")}
             </button>
           </div>
@@ -870,6 +883,7 @@ function MainPage() {
               e.currentTarget.style.boxShadow = goldButton.boxShadow;
             }}
           >
+            <Play size={20} fill="currentColor" />
             {t("play")}
           </button>
         </div>
