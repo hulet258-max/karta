@@ -129,7 +129,7 @@ function RoomCreate({ onClose, onRoomCreated }) {
     const tg = window.Telegram?.WebApp;
     const shareRoom = createdRoom || {};
     const shareContent = [
-      shareRoom.name || roomName.trim() || "Private Karta game",
+      shareRoom.name || roomName.trim() || "Private Carta game",
       `${Number(shareRoom.playerCount || 0)}/${Number(shareRoom.maxPlayers || 0) || "?"} ${t("players")}`,
       formatCoins(shareRoom.entryFee || birrToCoins(entryFee)),
     ].join(" · ");
@@ -267,12 +267,12 @@ function RoomCreate({ onClose, onRoomCreated }) {
   const privateRoomMaxPlayers = Number(createdRoom?.maxPlayers || 0);
   const canGoToGame = privateRoomCreated && privateRoomMaxPlayers > 0 && privateRoomPlayerCount >= privateRoomMaxPlayers;
   const currentUserId = String(user?.telegramId || user?.id || "");
-  const currentUserName = user?.displayName || user?.firstName || (user?.username ? `@${user.username}` : "");
+  const currentUserName = (user?.username ? `@${user.username}` : "") || user?.displayName || user?.firstName || "";
   const getPlayerDisplayName = (playerId) => {
     const normalizedId = String(playerId || "");
     const publicProfile = playerProfiles[normalizedId];
-    const profileName = publicProfile?.displayName
-      || (publicProfile?.username ? `@${publicProfile.username}` : "")
+    const profileName = (publicProfile?.username ? `@${publicProfile.username}` : "")
+      || publicProfile?.displayName
       || publicProfile?.firstName
       || "";
 
@@ -280,7 +280,7 @@ function RoomCreate({ onClose, onRoomCreated }) {
       return currentUserName ? `${currentUserName} (${t("you")})` : t("you");
     }
 
-    return profileName || `${t("player")} ${normalizedId.slice(-4)}`;
+    return profileName || t("player");
   };
 
   const styles = {

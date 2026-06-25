@@ -1,6 +1,6 @@
 // src/GamePage.js
 import React, { useCallback, useState, useEffect, useMemo, useRef } from "react";
-import { HelpCircle, History, X } from "lucide-react";
+import { Hand, HelpCircle, History, X } from "lucide-react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useSettings } from "./contexts/SettingsContext";
 import { useUser } from "./contexts/UserContext";
@@ -136,7 +136,10 @@ function GamePage() {
   const [pickedCardDecision, setPickedCardDecision] = useState(null);
   const [opponentPickIndicator, setOpponentPickIndicator] = useState(null);
   const [showGameRules, setShowGameRules] = useState(false);
+  const [callCooldownUntil, setCallCooldownUntil] = useState(0);
+  const [nowTick, setNowTick] = useState(Date.now());
   const lastPickNonceRef = useRef(null);
+  const lastCallNonceRef = useRef(null);
   const laidHistoryRef = useRef(null);
   const isLeavingRef = useRef(false);
 
@@ -187,6 +190,62 @@ function GamePage() {
 
     resumeGame();
   }, [BASE_URL, navigate, room, routeRoomId, user?.telegramId]);
+
+  const syncGameState = useCallback(async () => {
+    if (!room || !user?.telegramId) return;
+    const activeRoomId = room.id || room.roomId || routeRoomId;
+    if (!activeRoomId) return;
+
+    try {
+      socket.emit("auth_user", user.telegramId);
+      const response = await fetch(`${BASE_URL}/join-room`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          roomId: activeRoomId,
+          userId: user.telegramId,
+          socketId: socket.id,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.success) {
+        if (response.status === 404) navigate("/second", { replace: true });
+        return;
+      }
+
+      setRoom(data.room);
+      setPlayers(data.players || []);
+      setGameState(data.redisData || {});
+      await refreshUser?.();
+    } catch (error) {
+      console.warn("Could not sync game state:", error);
+    }
+  }, [BASE_URL, navigate, refreshUser, room, routeRoomId, user?.telegramId]);
+
+  useEffect(() => {
+    if (!user?.telegramId) return undefined;
+
+    const handleConnectOrReturn = () => {
+      syncGameState();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") syncGameState();
+    };
+
+    if (socket.connected) {
+      socket.emit("auth_user", user.telegramId);
+    }
+
+    socket.on("connect", handleConnectOrReturn);
+    window.addEventListener("focus", handleConnectOrReturn);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      socket.off("connect", handleConnectOrReturn);
+      window.removeEventListener("focus", handleConnectOrReturn);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [syncGameState, user?.telegramId]);
 
   useEffect(() => {
     const handleRoomUpdate = (data) => {
@@ -275,7 +334,8 @@ function GamePage() {
       return botProfile?.displayName || t("teachingBot");
     }
 
-    return playerProfiles[normalizedId]?.displayName || `${t("player")} ${normalizedId.slice(-4)}`;
+    const profile = playerProfiles[normalizedId] || {};
+    return (profile.username ? `@${profile.username}` : "") || profile.displayName || profile.firstName || t("player");
   }, [botProfile?.displayName, playerProfiles, t, user?.telegramId]);
 
   useEffect(() => {
@@ -314,6 +374,7 @@ function GamePage() {
       turn: "/1.mp3",
       waiting: "/2.mp3",
       deal: "/3.mp3",
+      call: "/call.mp3",
     };
     const source = sources[name] || sources.deal;
 
@@ -493,11 +554,50 @@ function GamePage() {
     prevWaitingRef.current = isWaiting;
   }, [gameEnded, gamePaused, gameState.status, playSound]);
 
+  useEffect(() => {
+    const timer = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   // Helper to show errors
   const showError = (msg) => {
     setErrorMsg(msg);
     setTimeout(() => setErrorMsg(""), 3000); // clear after 3 seconds
   };
+
+  useEffect(() => {
+    if (!user?.telegramId) return undefined;
+
+    const handlePlayerCall = (payload = {}) => {
+      const activeRoomId = String(room?.id || room?.roomId || routeRoomId || "");
+      if (String(payload.roomId || "") !== activeRoomId) return;
+      if (String(payload.targetUserId || "") !== String(user.telegramId)) return;
+      if (payload.nonce && lastCallNonceRef.current === payload.nonce) return;
+      if (payload.nonce) lastCallNonceRef.current = payload.nonce;
+
+      playSound("call");
+      const callerName = getPlayerName(payload.fromUserId);
+      setErrorMsg(t("playerCallNotification", { player: callerName }));
+      setTimeout(() => setErrorMsg(""), 4000);
+    };
+
+    socket.on("player_call", handlePlayerCall);
+    return () => {
+      socket.off("player_call", handlePlayerCall);
+    };
+  }, [getPlayerName, playSound, room?.id, room?.roomId, routeRoomId, t, user?.telegramId]);
+
+  useEffect(() => {
+    const savedCall = gameState.lastCall;
+    if (!savedCall?.nonce || lastCallNonceRef.current === savedCall.nonce) return;
+    if (String(savedCall.targetUserId || "") !== String(user?.telegramId || "")) return;
+
+    lastCallNonceRef.current = savedCall.nonce;
+    playSound("call");
+    const callerName = getPlayerName(savedCall.fromUserId);
+    setErrorMsg(t("playerCallNotification", { player: callerName }));
+    setTimeout(() => setErrorMsg(""), 4000);
+  }, [gameState.lastCall, getPlayerName, playSound, t, user?.telegramId]);
 
   // Always arrange cards in grouped order for display
   const groupedAndSortedCards = myCards
@@ -1402,6 +1502,33 @@ function GamePage() {
       backdropFilter: "blur(12px) saturate(1.2)",
       WebkitBackdropFilter: "blur(12px) saturate(1.2)",
     },
+    callPlayerButton: (active) => ({
+      position: "absolute",
+      top: `calc(${PAGE_TOP_PADDING} + 94px)`,
+      left: "20px",
+      width: "34px",
+      height: "34px",
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      borderRadius: "50%",
+      border: active
+        ? `1px solid ${colors.gold}`
+        : "1px solid rgba(255,246,94,0.24)",
+      background: active
+        ? `linear-gradient(180deg, ${colors.gold}, ${colors.goldDeep})`
+        : "rgba(0,0,0,0.24)",
+      color: active ? colors.textDark : "rgba(241,196,15,0.55)",
+      cursor: active ? "pointer" : "not-allowed",
+      padding: 0,
+      zIndex: 21,
+      opacity: active ? 1 : 0.58,
+      boxShadow: active
+        ? "0 10px 22px rgba(0,0,0,0.34), 0 0 16px rgba(255,246,94,0.24), inset 0 1px 0 rgba(255,255,255,0.35)"
+        : "0 10px 22px rgba(0,0,0,0.26), inset 0 1px 0 rgba(255,255,255,0.12)",
+      backdropFilter: "blur(12px) saturate(1.2)",
+      WebkitBackdropFilter: "blur(12px) saturate(1.2)",
+    }),
     practiceTip: (placement) => {
       const placements = {
         deck: {
@@ -1588,6 +1715,37 @@ function GamePage() {
   const leaveSummaryFees = Number(leaveSummary?.playerFeesPaid?.[myUserId] || myFeesPaid || 0);
   const leaveSummaryPot = Number(leaveSummary?.totalPot || totalPot || 0);
   const leaveSummaryCommission = Number(leaveSummary?.commissionAmount || 0);
+  const lastLay = gameState.lastLay || {};
+  const lastLayAt = Date.parse(lastLay.at || "");
+  const callTargetId = String(lastLay.targetPlayerId || turn || "");
+  const secondsSinceLastLay = Number.isFinite(lastLayAt)
+    ? Math.floor((nowTick - lastLayAt) / 1000)
+    : 0;
+  const canCallPlayer = Boolean(
+    myUserId &&
+    gameState.status === "playing" &&
+    !gameEnded &&
+    !gamePaused &&
+    String(lastLay.playerId || "") === myUserId &&
+    callTargetId &&
+    callTargetId !== myUserId &&
+    !isBotPlayer(callTargetId) &&
+    secondsSinceLastLay >= 10 &&
+    nowTick >= callCooldownUntil
+  );
+  const handleCallPlayer = () => {
+    if (!canCallPlayer) return;
+    const activeRoomId = room?.id || room?.roomId || routeRoomId;
+    if (!activeRoomId) return;
+
+    socket.emit("call_player", {
+      roomId: activeRoomId,
+      fromUserId: myUserId,
+      targetUserId: callTargetId,
+    });
+    setCallCooldownUntil(Date.now() + 10000);
+    showError(t("playerCallSent", { player: getPlayerName(callTargetId) }));
+  };
   const formatVote = (vote) => {
     if (vote === "continue") return t("continue");
     if (vote === "leave") return t("leave");
@@ -1701,6 +1859,19 @@ function GamePage() {
           onClick={() => setShowGameRules(true)}
         >
           <HelpCircle size={17} />
+        </button>
+      )}
+
+      {!gameEnded && (
+        <button
+          type="button"
+          style={styles.callPlayerButton(canCallPlayer)}
+          aria-label={t("callPlayer")}
+          title={canCallPlayer ? t("callPlayer") : t("callPlayerWait")}
+          onClick={handleCallPlayer}
+          disabled={!canCallPlayer}
+        >
+          <Hand size={17} />
         </button>
       )}
 
@@ -2165,7 +2336,7 @@ function GamePage() {
             }}
           />
           <div style={styles.playerName(isMyTurn)}>
-            {user ? (user.displayName || user.firstName || t("you")) : t("you")}
+            {user ? ((user.username ? `@${user.username}` : "") || user.displayName || user.firstName || t("you")) : t("you")}
           </div>
           {isMyTurn && (
             <div style={styles.turnLoader}>

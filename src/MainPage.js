@@ -22,7 +22,7 @@ function MainPage() {
   const [profileError, setProfileError] = useState("");
   const [shareLoading, setShareLoading] = useState(false);
   const [shareToast, setShareToast] = useState(null);
-  const profileButtonName = user?.displayName || user?.firstName || (user?.username ? `@${user.username}` : t("user"));
+  const profileButtonName = (user?.username ? `@${user.username}` : "") || user?.displayName || user?.firstName || t("user");
   const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000/api";
 
   useEffect(() => {
@@ -81,7 +81,7 @@ function MainPage() {
       }
 
       const shareData = {
-        title: "Karta",
+        title: "Carta",
         text: t("shareInviteText"),
         url: shareUrl,
       };
@@ -724,7 +724,7 @@ function MainPage() {
           >
             <div style={styles.settingsHeader}>
               <h2 id="profile-title" style={styles.settingsTitle}>
-                {profile?.user?.displayName || profile?.user?.firstName || t("user")}
+                {(profile?.user?.username ? `@${profile.user.username}` : "") || profile?.user?.displayName || profile?.user?.firstName || t("user")}
               </h2>
               <button
                 type="button"
