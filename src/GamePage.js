@@ -1729,7 +1729,6 @@ function GamePage() {
     String(lastLay.playerId || "") === myUserId &&
     callTargetId &&
     callTargetId !== myUserId &&
-    !isBotPlayer(callTargetId) &&
     secondsSinceLastLay >= 10 &&
     nowTick >= callCooldownUntil
   );
