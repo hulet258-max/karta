@@ -762,8 +762,8 @@ function MainPage() {
                 <span style={styles.profileStatValue}>{profile?.referralStats?.shareCount || 0}</span>
               </div>
               <div style={styles.profileStat}>
-                <span style={styles.profileStatLabel}>{t("gotCoins")}</span>
-                <span style={styles.profileStatValue}><CoinAmount value={profile?.referralStats?.earnedCoins ?? profile?.referralStats?.earnedBirr} /></span>
+                <span style={styles.profileStatLabel}>{t("gotBirr")}</span>
+                <span style={styles.profileStatValue}><CoinAmount value={profile?.referralStats?.earnedBirr} /></span>
               </div>
               <div style={styles.profileStat}>
                 <span style={styles.profileStatLabel}>{t("rewardsLeft")}</span>

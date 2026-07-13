@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { useSettings } from "./contexts/SettingsContext";
 import { useUser } from "./contexts/UserContext";
 import CoinAmount from "./CoinAmount";
-import { COIN_BIRR_VALUE, MIN_ROOM_ENTRY_COINS, birrToCoins, coinsToBirr, formatCoins, isWholeBirrUnit } from "./utils/money";
+import { MIN_ROOM_ENTRY_BIRR, ROOM_ENTRY_STEP_BIRR, formatBirr, isValidRoomEntryBirr } from "./utils/money";
 import ShareToast from "./ShareToast";
 import TinySpinner from "./TinySpinner";
 import { sharePreparedTelegramMessage, switchTelegramInlineQuery } from "./utils/telegramShare";
@@ -17,7 +17,7 @@ function RoomCreate({ onClose, onRoomCreated }) {
   const BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000/api";
   const [roomName, setRoomName] = useState("");
   const [gameType, setGameType] = useState("2-players");
-  const minRoomEntryBirr = coinsToBirr(MIN_ROOM_ENTRY_COINS);
+  const minRoomEntryBirr = MIN_ROOM_ENTRY_BIRR;
   const [entryFee, setEntryFee] = useState(String(minRoomEntryBirr));
   const [visibility, setVisibility] = useState("public");
   const [createdRoomId, setCreatedRoomId] = useState("");
@@ -131,7 +131,7 @@ function RoomCreate({ onClose, onRoomCreated }) {
     const shareContent = [
       shareRoom.name || roomName.trim() || "Private Carta game",
       `${Number(shareRoom.playerCount || 0)}/${Number(shareRoom.maxPlayers || 0) || "?"} ${t("players")}`,
-      formatCoins(shareRoom.entryFee || birrToCoins(entryFee)),
+      formatBirr(shareRoom.entryFee || entryFee),
     ].join(" · ");
     const showShareToast = (type, messageKey) => {
       setShareToast({
@@ -208,12 +208,10 @@ function RoomCreate({ onClose, onRoomCreated }) {
     }
 
     const entryFeeBirr = Number(entryFee);
-    if (!isWholeBirrUnit(entryFeeBirr) || entryFeeBirr < minRoomEntryBirr) {
-      setError(t("minRoomEntryError", { amount: formatCoins(MIN_ROOM_ENTRY_COINS) }));
+    if (!isValidRoomEntryBirr(entryFeeBirr)) {
+      setError(t("minRoomEntryError", { amount: formatBirr(MIN_ROOM_ENTRY_BIRR) }));
       return;
     }
-    const entryFeeCoins = birrToCoins(entryFeeBirr);
-
     setLoading(true);
     setError("");
 
@@ -224,7 +222,7 @@ function RoomCreate({ onClose, onRoomCreated }) {
         body: JSON.stringify({
           roomName: roomName.trim(),
           gameType,
-          entryFee: entryFeeCoins,
+          entryFee: entryFeeBirr,
           visibility,
           creatorId: user.telegramId,
           socketId: socket.id,
@@ -609,7 +607,7 @@ function RoomCreate({ onClose, onRoomCreated }) {
                   type="number"
                   id="entry-fee"
                   min={minRoomEntryBirr}
-                  step={COIN_BIRR_VALUE}
+                  step={ROOM_ENTRY_STEP_BIRR}
                   placeholder={String(minRoomEntryBirr)}
                   value={entryFee}
                   onChange={(e) => setEntryFee(e.target.value)}
@@ -621,7 +619,7 @@ function RoomCreate({ onClose, onRoomCreated }) {
             <div style={{ ...styles.privateLinkBox, marginTop: "10px", padding: "9px" }}>
               <div style={styles.privateLinkTitle}>
                 <span>{t("minimumRoomEntry")}</span>
-                <CoinAmount value={MIN_ROOM_ENTRY_COINS} size={15} />
+                <CoinAmount value={MIN_ROOM_ENTRY_BIRR} size={15} />
               </div>
             </div>
 

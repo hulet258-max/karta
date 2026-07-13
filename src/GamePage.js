@@ -1,6 +1,6 @@
 // src/GamePage.js
 import React, { useCallback, useState, useEffect, useMemo, useRef } from "react";
-import { Hand, HelpCircle, History, X } from "lucide-react";
+import { Hand, HelpCircle, ScrollText, X } from "lucide-react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useSettings } from "./contexts/SettingsContext";
 import { useUser } from "./contexts/UserContext";
@@ -10,30 +10,8 @@ import CoinAmount from "./CoinAmount";
 
 const rankOrder = ["A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2"];
 const PAGE_TOP_PADDING = "80px";
+const DEBUG_GAME_EVENTS = process.env.REACT_APP_DEBUG_GAME_EVENTS === "true";
 const suitOrder = ["♠", "♥", "♦", "♣"];
-
-const roundMoney = (value) => {
-  const amount = Number(value || 0);
-  return Number.isFinite(amount) ? Math.round(amount) : 0;
-};
-
-const getCommissionRate = (entryFee, gamesPlayed = 0) => {
-  const fee = Number(entryFee || 0);
-  if (fee <= 0) return 0;
-  let rate = 0.02;
-  if (fee >= 250) rate = 0.12;
-  else if (fee >= 100) rate = 0.1;
-  else if (fee >= 50) rate = 0.08;
-  else if (fee >= 25) rate = 0.06;
-  else if (fee >= 10) rate = 0.04;
-  return Math.min(rate + Math.max(Number(gamesPlayed || 0), 0) * 0.01, 0.25);
-};
-
-const calculateCommissionAmount = (totalPot, entryFee, gamesPlayed = 0) => {
-  const pot = roundMoney(totalPot);
-  if (pot <= 0) return 0;
-  return Math.min(pot, Math.max(1, Math.ceil(pot * getCommissionRate(entryFee, gamesPlayed))));
-};
 
 const isJoker = (card) => String(card?.rank || "").toUpperCase() === "JOKER";
 const isBotPlayer = (playerId) => String(playerId || "").startsWith("botgamer:");
@@ -249,7 +227,9 @@ function GamePage() {
 
   useEffect(() => {
     const handleRoomUpdate = (data) => {
-      console.log("📢 Received room_update:", data);
+      if (DEBUG_GAME_EVENTS) {
+        console.log("Received room_update:", data);
+      }
       setRoom(data.room);
       setPlayers(data.players);
       setGameState(data.redisData);
@@ -302,19 +282,30 @@ function GamePage() {
     roomStats.finalizedAt || "",
   ].join(":");
   const myUserId = user?.telegramId ? String(user.telegramId) : "";
-  const storedCommissionAmount = Number(roomStats.commissionAmount || 0);
-  const currentRoundCommission = roomStats.feeEscrowed && currentRoundPot > 0
-    ? calculateCommissionAmount(currentRoundPot, roomStats.entryFee || room?.entryFee, Number(roomStats.gamesPlayed || 0) + 1)
-    : 0;
-  const projectedCommission = Math.round(
-    (roomStats.escrowSettled || roomStats.finalizedAt)
-      ? storedCommissionAmount
-      : storedCommissionAmount + currentRoundCommission
+  const lastSettlement = roomStats.lastSettlement || null;
+  const lastCompletedGame = gameHistory.length
+    ? gameHistory[gameHistory.length - 1]
+    : null;
+  const settledRoundPayout = Number(
+    gameResult?.roundPayout
+    ?? lastSettlement?.winnerPayout
+    ?? lastCompletedGame?.roundPayout
+    ?? 0
+  );
+  const settledRoundPot = Number(
+    gameResult?.roundPot
+    ?? lastSettlement?.roundPot
+    ?? lastCompletedGame?.roundAmountToWin
+    ?? currentRoundPot
+    ?? 0
   );
   const myFeesPaid = Number(roomStats.playerFeesPaid?.[myUserId] || 0);
   const myProjectedWin = Number(
     roomStats.payouts?.[myUserId] || 0
   );
+  const myRoundReceived = String(gameResult?.winnerId || lastSettlement?.winnerId || lastCompletedGame?.winnerId || "") === myUserId
+    ? Number(settledRoundPayout || myProjectedWin || 0)
+    : 0;
   const completedGamesForYou = gameHistory.filter((game) => (
     (game.players || []).some((playerId) => String(playerId) === myUserId)
   ));
@@ -707,7 +698,9 @@ function GamePage() {
           showError(data.error || t("actionFailed"));
           console.error(`❌ Server error from ${endpoint}:`, data);
         } else {
-          console.log(`✅ Server response from ${endpoint}:`, data);
+          if (DEBUG_GAME_EVENTS) {
+            console.log(`Server response from ${endpoint}:`, data);
+          }
 
           // Trigger flying card animation on successful pick/lay actions
           if (action === "Pick" && target === "Deck" && data.pickedCard) {
@@ -1109,12 +1102,12 @@ function GamePage() {
       justifyContent: "center",
       alignItems: "flex-end",
       marginTop: "8px",
-      height: "clamp(90px, 15vw, 130px)",
+      height: "clamp(100px, 17vw, 140px)",
       paddingBottom: "35px",
     },
     card: {
-      width: "clamp(40px, 8vw, 60px)", 
-      height: "clamp(60px, 12vw, 90px)",
+      width: "clamp(45px, 9vw, 66px)",
+      height: "clamp(68px, 13.5vw, 99px)",
       background: "#fffaf0",
       borderRadius: "8px",
       border: "1px solid rgba(255,255,255,0.82)",
@@ -1482,6 +1475,42 @@ function GamePage() {
       flexDirection: "column",
       gap: "7px",
     },
+    progressSectionTitle: {
+      margin: "3px 0 7px",
+      color: colors.gold,
+      fontSize: "0.72rem",
+      fontWeight: 900,
+      letterSpacing: "0.08em",
+      textTransform: "uppercase",
+    },
+    balanceHighlight: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: "12px",
+      padding: "10px 11px",
+      marginBottom: "11px",
+      borderRadius: "9px",
+      border: "1px solid rgba(255,246,94,0.35)",
+      background: "linear-gradient(135deg, rgba(255,246,94,0.16), rgba(255,255,255,0.06))",
+    },
+    roster: {
+      display: "flex",
+      flexWrap: "wrap",
+      gap: "6px",
+      marginBottom: "11px",
+    },
+    rosterPlayer: {
+      maxWidth: "100%",
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      whiteSpace: "nowrap",
+      padding: "5px 8px",
+      borderRadius: "999px",
+      border: "1px solid rgba(245,238,194,0.18)",
+      background: "rgba(255,255,255,0.07)",
+      fontSize: "0.7rem",
+    },
     practiceHelpButton: {
       position: "absolute",
       top: `calc(${PAGE_TOP_PADDING} + 54px)`,
@@ -1617,6 +1646,24 @@ function GamePage() {
       fontSize: "0.74rem",
       lineHeight: 1.45,
     },
+    roundHeader: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: "8px",
+      marginBottom: "5px",
+    },
+    roundRow: {
+      display: "flex",
+      justifyContent: "space-between",
+      gap: "10px",
+      color: "rgba(245,238,194,0.82)",
+    },
+    roundValue: {
+      color: colors.cream,
+      fontWeight: 700,
+      textAlign: "right",
+    },
     turnLoader: {
       marginTop: "6px",
       width: "28px",
@@ -1714,7 +1761,6 @@ function GamePage() {
   const leaveSummaryPayout = Number(leaveSummary?.payouts?.[myUserId] || 0);
   const leaveSummaryFees = Number(leaveSummary?.playerFeesPaid?.[myUserId] || myFeesPaid || 0);
   const leaveSummaryPot = Number(leaveSummary?.totalPot || totalPot || 0);
-  const leaveSummaryCommission = Number(leaveSummary?.commissionAmount || 0);
   const lastLay = gameState.lastLay || {};
   const lastLayAt = Date.parse(lastLay.at || "");
   const callTargetId = String(lastLay.targetPlayerId || turn || "");
@@ -1845,7 +1891,7 @@ function GamePage() {
           title={t("gameProgress")}
           onClick={() => setShowProgress((isOpen) => !isOpen)}
         >
-          <History size={19} />
+          <ScrollText size={20} />
         </button>
       </div>
 
@@ -1888,6 +1934,12 @@ function GamePage() {
             </button>
           </div>
 
+          <div style={styles.balanceHighlight}>
+            <span style={styles.progressDetailLabel}>{t("currentBalance")}</span>
+            <span style={styles.progressDetailValue}><CoinAmount value={user?.balance} size={17} /></span>
+          </div>
+
+          <div style={styles.progressSectionTitle}>{t("gameProgress")}</div>
           <div style={styles.progressDetails}>
             <div style={styles.progressDetailRow}>
               <span style={styles.progressDetailLabel}>{t("roomName")}</span>
@@ -1920,17 +1972,36 @@ function GamePage() {
             </div>
           </div>
 
+          <div style={styles.progressSectionTitle}>{t("players")}</div>
+          <div style={styles.roster}>
+            {progressPlayers.map((playerId) => (
+              <span style={styles.rosterPlayer} key={`roster-${playerId}`}>
+                {getPlayerName(playerId)}
+              </span>
+            ))}
+          </div>
+
+          <div style={styles.progressSectionTitle}>{t("gameHistory")}</div>
           <div style={styles.progressList}>
             {gameHistory.length > 0 ? (
               gameHistory.map((game) => (
                 <div style={styles.progressRound} key={`round-${game.round}`}>
-                  <div>
+                  <div style={styles.roundHeader}>
                     <strong style={{ color: colors.gold }}>{t("gameRound", { round: game.round })}</strong>
-                    {" "} - {t("winner")}: {getPlayerName(game.winnerId)}
-                    {game.jokerBonus ? ` (${t("jokerBonus")})` : ""}
+                    {game.jokerBonus ? <span>{t("jokerBonus")}</span> : null}
                   </div>
-                  <div>{t("players")}: {(game.players || []).map((playerId) => getPlayerName(playerId)).join(", ")}</div>
-                  <div>{t("totalAmount")}: {formatBirr(game.totalAmountToWin)}</div>
+                  <div style={styles.roundRow}>
+                    <span>{t("winner")}</span>
+                    <span style={styles.roundValue}>{getPlayerName(game.winnerId)}</span>
+                  </div>
+                  <div style={styles.roundRow}>
+                    <span>{t("players")}</span>
+                    <span style={styles.roundValue}>{(game.players || []).map((playerId) => getPlayerName(playerId)).join(", ")}</span>
+                  </div>
+                  <div style={styles.roundRow}>
+                    <span>{t("totalAmount")}</span>
+                    <span style={styles.roundValue}>{formatBirr(game.totalAmountToWin)}</span>
+                  </div>
                 </div>
               ))
             ) : (
@@ -2097,7 +2168,6 @@ function GamePage() {
             <div style={styles.gameOverDetails}>
               <div>{t("playedWith")}: {formatBirr(leaveSummaryFees)}</div>
               <div>{t("totalRoomAmount")}: {formatBirr(leaveSummaryPot)}</div>
-              <div>{t("commission")}: {formatBirr(leaveSummaryCommission)}</div>
               <div>{t("youReceive")}: {formatBirr(leaveSummaryPayout)}</div>
               <div>{t("gamesPlayed")}: {Number(leaveSummary.gamesPlayed || 0)}</div>
             </div>
@@ -2254,9 +2324,10 @@ function GamePage() {
               ) : (
                 <>
                   <div>{t("playedWith")}: {formatBirr(myFeesPaid)}</div>
-                  <div>{t("totalRoomAmount")}: {formatBirr(totalPot)}</div>
-                  <div>{t("commission")}: {formatBirr(projectedCommission)}</div>
-                  <div>{t("youReceived")}: {formatBirr(myProjectedWin)}</div>
+                  <div>{t("totalRoomAmount")}: {formatBirr(settledRoundPot || totalPot)}</div>
+                  <div>{t("youReceived")}: {formatBirr(
+                    gameEnded ? myRoundReceived : myProjectedWin
+                  )}</div>
                 </>
               )}
               <div>

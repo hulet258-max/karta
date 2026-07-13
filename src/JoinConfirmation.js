@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { useSettings } from "./contexts/SettingsContext";
 import { socket } from "./socket";
 import CoinAmount from "./CoinAmount";
-import { formatCoins } from "./utils/money";
+import { formatBirr } from "./utils/money";
 
 function JoinConfirmation({ room, user, onClose, isPrivateShare = false }) {
   const navigate = useNavigate();
@@ -238,7 +238,7 @@ function JoinConfirmation({ room, user, onClose, isPrivateShare = false }) {
           </p>
 
           <p style={styles.note}>
-            {t("joinNote", { amount: formatCoins(room.entryFee) })}
+            {t("joinNote", { amount: formatBirr(room.entryFee) })}
           </p>
 
           {!canJoin && (

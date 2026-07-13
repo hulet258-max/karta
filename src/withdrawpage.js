@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { useSettings } from "./contexts/SettingsContext";
 import { useUser } from "./contexts/UserContext";
 import CoinAmount from "./CoinAmount";
-import { COIN_BIRR_VALUE, birrToCoins, coinsToBirr, formatCoins, isWholeBirrUnit } from "./utils/money";
+import { formatBirr, isWholeBirrUnit } from "./utils/money";
 
 function WithdrawPage() {
   const navigate = useNavigate();
@@ -12,20 +12,31 @@ function WithdrawPage() {
   const { t, ui } = useSettings();
 
   const [balance, setBalance] = useState(0);
+  const [withdrawableBalance, setWithdrawableBalance] = useState(0);
+  const [lockedGiftBalance, setLockedGiftBalance] = useState(0);
   const [amount, setAmount] = useState("");
+  const [phone, setPhone] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState(null);
 
   const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000/api";
   const minWithdraw = 1;
-  const maxWithdraw = balance;
-  const minWithdrawBirr = coinsToBirr(minWithdraw);
-  const maxWithdrawBirr = coinsToBirr(maxWithdraw);
+  const maxWithdraw = withdrawableBalance;
+  const minWithdrawBirr = minWithdraw;
+  const maxWithdrawBirr = maxWithdraw;
   const telegramId = user?.telegramId || user?.id;
+
+  const isValidPhoneNumber = (value) => {
+    const compact = String(value || "").trim().replace(/[\s-]/g, "");
+    return /^(?:\+251|251|0)[79]\d{8}$/.test(compact);
+  };
 
   useEffect(() => {
     if (user?.balance !== undefined) {
       setBalance(Number(user.balance) || 0);
+      setWithdrawableBalance(Number(user.withdrawableBalance ?? user.balance) || 0);
+      setLockedGiftBalance(Number(user.nonWithdrawableBalance || 0));
+      setPhone(user.phone || "");
     }
   }, [user]);
 
@@ -43,6 +54,9 @@ function WithdrawPage() {
       .then((data) => {
         if (data?.success) {
           setBalance(Number(data.user?.balance || 0));
+          setWithdrawableBalance(Number(data.user?.withdrawableBalance ?? data.user?.balance) || 0);
+          setLockedGiftBalance(Number(data.user?.nonWithdrawableBalance || 0));
+          setPhone(data.user?.phone || "");
         }
       })
       .catch((error) => {
@@ -59,13 +73,19 @@ function WithdrawPage() {
       return;
     }
 
-    const parsedBirrAmount = Number(amount);
-    if (!isWholeBirrUnit(parsedBirrAmount) || parsedBirrAmount < minWithdrawBirr) {
-      setResult({ type: "error", text: t("minWithdrawError", { amount: formatCoins(minWithdraw) }) });
+    const phoneNumber = phone.trim();
+    if (!isValidPhoneNumber(phoneNumber)) {
+      setResult({ type: "error", text: t("withdrawPhoneError") });
       return;
     }
 
-    const parsedAmount = birrToCoins(parsedBirrAmount);
+    const parsedBirrAmount = Number(amount);
+    if (!isWholeBirrUnit(parsedBirrAmount) || parsedBirrAmount < minWithdrawBirr) {
+      setResult({ type: "error", text: t("minWithdrawError", { amount: formatBirr(minWithdraw) }) });
+      return;
+    }
+
+    const parsedAmount = parsedBirrAmount;
 
     if (parsedAmount > maxWithdraw) {
       setResult({ type: "error", text: t("withdrawBalanceError") });
@@ -83,6 +103,7 @@ function WithdrawPage() {
         body: JSON.stringify({
           telegramId,
           amount: parsedAmount,
+          phone: phoneNumber,
         }),
       });
 
@@ -92,11 +113,14 @@ function WithdrawPage() {
       }
 
       setBalance(Number(data.newBalance || 0));
+      setWithdrawableBalance(Number(data.newWithdrawableBalance ?? data.limits?.maxWithdraw ?? 0));
+      setLockedGiftBalance(Number(data.nonWithdrawableBalance || 0));
+      setPhone(data.phone || phoneNumber);
       await refreshUser?.();
       setAmount("");
       setResult({
         type: "success",
-        text: t("withdrawRequestSentInfo", { amount: formatCoins(parsedAmount) }),
+        text: t("withdrawRequestSentInfo", { amount: formatBirr(parsedAmount) }),
       });
     } catch (error) {
       setResult({
@@ -214,6 +238,16 @@ function WithdrawPage() {
       fontSize: "0.9rem",
       border: "1px solid transparent",
     },
+    phoneWarning: {
+      margin: "-3px 0 14px",
+      padding: "10px 11px",
+      borderRadius: "9px",
+      border: "1px solid rgba(255, 193, 7, 0.5)",
+      background: "rgba(255, 152, 0, 0.13)",
+      color: colors.cream,
+      fontSize: "0.82rem",
+      lineHeight: 1.45,
+    },
   };
 
   return (
@@ -226,6 +260,9 @@ function WithdrawPage() {
           <h3 style={styles.statValue}><CoinAmount value={balance} size={22} /></h3>
           <p style={styles.infoText}>{t("minWithdraw")}: <CoinAmount value={minWithdraw} /></p>
           <p style={styles.infoText}>{t("maxWithdraw")}: <CoinAmount value={maxWithdraw} /></p>
+          {lockedGiftBalance > 0 && (
+            <p style={styles.infoText}>{t("lockedGiftBalance")}: <CoinAmount value={lockedGiftBalance} /></p>
+          )}
         </div>
 
         <form onSubmit={handleWithdraw}>
@@ -234,13 +271,29 @@ function WithdrawPage() {
             type="number"
             min={minWithdrawBirr}
             max={maxWithdrawBirr}
-            step={COIN_BIRR_VALUE}
+            step={1}
             value={amount}
             onChange={(event) => setAmount(event.target.value)}
             placeholder={t("withdrawPlaceholder")}
             style={styles.input}
             disabled={submitting}
           />
+
+          <label style={styles.label}>{t("withdrawPhone")}</label>
+          <input
+            type="tel"
+            value={phone}
+            onChange={(event) => setPhone(event.target.value)}
+            placeholder={t("withdrawPhonePlaceholder")}
+            style={styles.input}
+            disabled={submitting}
+            autoComplete="tel"
+            inputMode="tel"
+            required
+          />
+          <div style={styles.phoneWarning} role="note">
+            {t("withdrawPhoneWarning")}
+          </div>
 
           <div style={styles.actions}>
             <button
