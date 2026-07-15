@@ -1,20 +1,41 @@
 // src/GamePage.js
 import React, { useCallback, useState, useEffect, useMemo, useRef } from "react";
-import { Hand, HelpCircle, ScrollText, X } from "lucide-react";
+import { Hand, HelpCircle, LogOut, RefreshCw, ScrollText, Trophy, X } from "lucide-react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useSettings } from "./contexts/SettingsContext";
 import { useUser } from "./contexts/UserContext";
 import { socket } from "./socket";
 import { formatBirr } from "./utils/money";
 import CoinAmount from "./CoinAmount";
+import { getDisplayName } from "./utils/displayName";
 
 const rankOrder = ["A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2"];
 const PAGE_TOP_PADDING = "80px";
+const DEFAULT_PROFILE_PHOTO = "https://cdn-icons-png.flaticon.com/512/149/149071.png";
 const DEBUG_GAME_EVENTS = process.env.REACT_APP_DEBUG_GAME_EVENTS === "true";
 const suitOrder = ["♠", "♥", "♦", "♣"];
 
 const isJoker = (card) => String(card?.rank || "").toUpperCase() === "JOKER";
 const isBotPlayer = (playerId) => String(playerId || "").startsWith("botgamer:");
+const getArrangedCardGroups = (cards = []) => {
+  const groups = Object.values(cards.reduce((acc, card, originalIndex) => {
+    const key = isJoker(card) ? "JOKER" : String(card?.rank || "?");
+    acc[key] = acc[key] || { rank: key, cards: [] };
+    acc[key].cards.push({ ...card, originalIndex });
+    return acc;
+  }, {}));
+
+  return groups
+    .sort((a, b) => {
+      if (a.rank === "JOKER" || b.rank === "JOKER") return a.rank === "JOKER" ? 1 : -1;
+      if (a.cards.length !== b.cards.length) return b.cards.length - a.cards.length;
+      return rankOrder.indexOf(a.rank) - rankOrder.indexOf(b.rank);
+    })
+    .map((group) => ({
+      ...group,
+      cards: group.cards.sort((a, b) => suitOrder.indexOf(a.suit) - suitOrder.indexOf(b.suit)),
+    }));
+};
 const getJokerIconSrc = (card) => {
   if (!isJoker(card)) return "";
   const cardColor = String(card?.color || "").toLowerCase();
@@ -93,14 +114,12 @@ function GamePage() {
   const [highlightedCardKey, setHighlightedCardKey] = useState(null);
   const prevMyCardsRef = useRef([]);
   const prevGameStatusRef = useRef(location.state?.redisData?.status || null);
-  const prevGameEndedRef = useRef(Boolean(location.state?.redisData?.gameEnded || location.state?.redisData?.status === "ended"));
   const prevTurnRef = useRef(location.state?.redisData?.turn || null);
   const prevWaitingRef = useRef(false);
   const prevLedgerKeyRef = useRef("");
   const audioRefs = useRef({});
   const [flyingCard, setFlyingCard] = useState(null);
   const [isDealing, setIsDealing] = useState(false);
-  const [isWinning, setIsWinning] = useState(false);
   
   // ✨ UI feedback states
   const [errorMsg, setErrorMsg] = useState("");
@@ -282,6 +301,9 @@ function GamePage() {
     roomStats.finalizedAt || "",
   ].join(":");
   const myUserId = user?.telegramId ? String(user.telegramId) : "";
+  const didCurrentUserWin = Boolean(gameResult?.winnerId && String(gameResult.winnerId) === myUserId);
+  const revealedHands = gameResult?.revealedHands || (gameEnded ? playerCards : {});
+  const winnerCards = revealedHands?.[String(gameResult?.winnerId)] || [];
   const lastSettlement = roomStats.lastSettlement || null;
   const lastCompletedGame = gameHistory.length
     ? gameHistory[gameHistory.length - 1]
@@ -292,20 +314,7 @@ function GamePage() {
     ?? lastCompletedGame?.roundPayout
     ?? 0
   );
-  const settledRoundPot = Number(
-    gameResult?.roundPot
-    ?? lastSettlement?.roundPot
-    ?? lastCompletedGame?.roundAmountToWin
-    ?? currentRoundPot
-    ?? 0
-  );
   const myFeesPaid = Number(roomStats.playerFeesPaid?.[myUserId] || 0);
-  const myProjectedWin = Number(
-    roomStats.payouts?.[myUserId] || 0
-  );
-  const myRoundReceived = String(gameResult?.winnerId || lastSettlement?.winnerId || lastCompletedGame?.winnerId || "") === myUserId
-    ? Number(settledRoundPayout || myProjectedWin || 0)
-    : 0;
   const completedGamesForYou = gameHistory.filter((game) => (
     (game.players || []).some((playerId) => String(playerId) === myUserId)
   ));
@@ -326,8 +335,16 @@ function GamePage() {
     }
 
     const profile = playerProfiles[normalizedId] || {};
-    return (profile.username ? `@${profile.username}` : "") || profile.displayName || profile.firstName || t("player");
+    return getDisplayName(profile, t("player"));
   }, [botProfile?.displayName, playerProfiles, t, user?.telegramId]);
+  const getPlayerPhoto = useCallback((playerId) => {
+    const normalizedId = String(playerId || "");
+    if (normalizedId === String(user?.telegramId || "")) {
+      return user?.photo || user?.photoUrl || DEFAULT_PROFILE_PHOTO;
+    }
+    return playerProfiles[normalizedId]?.photoUrl
+      || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(normalizedId)}`;
+  }, [playerProfiles, user?.photo, user?.photoUrl, user?.telegramId]);
 
   useEffect(() => {
     const playerIds = [...new Set((players || []).map(String).filter((playerId) => playerId && !isBotPlayer(playerId)))];
@@ -426,19 +443,6 @@ function GamePage() {
     prevGameStatusRef.current = currentStatus;
     return undefined;
   }, [gameState.status, playSound]);
-
-  useEffect(() => {
-    const wasEnded = prevGameEndedRef.current;
-    if (!wasEnded && gameEnded) {
-      setIsWinning(true);
-      const timer = setTimeout(() => setIsWinning(false), 1800);
-      prevGameEndedRef.current = gameEnded;
-      return () => clearTimeout(timer);
-    }
-
-    prevGameEndedRef.current = gameEnded;
-    return undefined;
-  }, [gameEnded]);
 
   // Detect newly picked card and highlight it
   useEffect(() => {
@@ -1192,30 +1196,35 @@ function GamePage() {
       filter: "grayscale(0.5)",
     },
     gameOverOverlay: {
-      position: "absolute",
+      position: "fixed",
       inset: 0,
-      background: "rgba(0,0,0,0.62)",
-      backdropFilter: "blur(10px)",
-      WebkitBackdropFilter: "blur(10px)",
+      background: "radial-gradient(circle at 50% 12%, rgba(241,196,15,0.2), transparent 34%), rgba(0,0,0,0.76)",
+      backdropFilter: "blur(14px)",
+      WebkitBackdropFilter: "blur(14px)",
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
       zIndex: 2000,
-      padding: "20px",
+      padding: "16px",
     },
     gameOverPopup: {
-      width: "min(520px, 92vw)",
+      width: "min(430px, 94vw)",
+      maxHeight: "calc(100dvh - 32px)",
+      overflowY: "auto",
       ...glassPanel,
-      borderRadius: "14px",
-      padding: "18px 20px",
+      background: "linear-gradient(155deg, rgba(16,67,35,0.98), rgba(4,24,13,0.98))",
+      border: `1px solid ${colors.gold}`,
+      borderRadius: "18px",
+      padding: "14px",
+      boxShadow: "0 28px 70px rgba(0,0,0,0.72), 0 0 38px rgba(241,196,15,0.16), inset 0 1px 0 rgba(255,255,255,0.22)",
     },
     gameOverTitle: {
       margin: 0,
-      fontSize: "1.2rem",
+      fontSize: "clamp(1.12rem, 4vw, 1.45rem)",
       color: colors.gold,
     },
     gameOverSubtitle: {
-      marginTop: "8px",
+      marginTop: "3px",
       opacity: 0.85,
       fontSize: "0.9rem",
     },
@@ -1230,8 +1239,110 @@ function GamePage() {
     gameOverActions: {
       marginTop: "16px",
       display: "flex",
-      justifyContent: "flex-end",
+      justifyContent: "center",
+      flexWrap: "wrap",
       gap: "10px",
+    },
+    resultHero: (won) => ({
+      position: "relative",
+      overflow: "hidden",
+      display: "flex",
+      alignItems: "center",
+      gap: "10px",
+      padding: "10px 12px",
+      borderRadius: "13px",
+      background: won
+        ? "linear-gradient(135deg, rgba(241,196,15,0.22), rgba(42,155,78,0.2))"
+        : "linear-gradient(135deg, rgba(111,124,144,0.22), rgba(28,35,48,0.35))",
+      border: won ? "1px solid rgba(255,226,79,0.55)" : "1px solid rgba(186,199,218,0.28)",
+    }),
+    resultHeroIcon: (won) => ({
+      width: "42px",
+      height: "42px",
+      flex: "0 0 42px",
+      display: "grid",
+      placeItems: "center",
+      borderRadius: "50%",
+      color: won ? colors.textDark : "#e8edf5",
+      background: won
+        ? "linear-gradient(180deg, #fff05f, #d7a91f)"
+        : "linear-gradient(180deg, #657086, #31394a)",
+      boxShadow: won ? "0 0 24px rgba(255,232,92,0.48)" : "0 9px 20px rgba(0,0,0,0.3)",
+    }),
+    resultHeroCopy: {
+      minWidth: 0,
+      display: "flex",
+      flexDirection: "column",
+      gap: "4px",
+    },
+    resultEyebrow: {
+      color: "rgba(255,255,255,0.68)",
+      fontSize: "0.72rem",
+      fontWeight: 800,
+      letterSpacing: "0.12em",
+      textTransform: "uppercase",
+    },
+    resultHandPanel: {
+      minWidth: 0,
+      marginTop: "10px",
+      padding: "9px",
+      borderRadius: "11px",
+      background: "rgba(241,196,15,0.08)",
+      border: "1px solid rgba(241,196,15,0.3)",
+    },
+    resultHandTitle: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: "8px",
+      marginBottom: "7px",
+      fontSize: "0.72rem",
+      fontWeight: 800,
+    },
+    resultCardGroups: {
+      display: "flex",
+      flexWrap: "wrap",
+      alignItems: "flex-end",
+      justifyContent: "center",
+      gap: "4px",
+    },
+    resultCardGroup: {
+      display: "flex",
+      padding: "3px",
+      borderRadius: "6px",
+      background: "rgba(0,0,0,0.18)",
+    },
+    resultCard: {
+      width: "clamp(24px, 6vw, 31px)",
+      height: "clamp(36px, 8.5vw, 45px)",
+      marginLeft: "-6px",
+      paddingTop: "3px",
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      justifyContent: "flex-start",
+      borderRadius: "6px",
+      border: "1px solid rgba(255,255,255,0.9)",
+      background: "#fffaf0",
+      boxShadow: "-2px 3px 8px rgba(0,0,0,0.42)",
+      fontSize: "clamp(0.58rem, 2vw, 0.74rem)",
+      fontWeight: 900,
+      lineHeight: 1,
+      overflow: "hidden",
+    },
+    resultWinAmount: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: "7px",
+      marginTop: "10px",
+      padding: "9px",
+      borderRadius: "11px",
+      color: colors.gold,
+      background: "rgba(241,196,15,0.1)",
+      border: "1px solid rgba(241,196,15,0.26)",
+      fontSize: "0.84rem",
+      fontWeight: 800,
     },
     confirmOverlay: {
       position: "absolute",
@@ -1796,11 +1907,6 @@ function GamePage() {
     if (vote === "leave") return t("leave");
     return vote;
   };
-  const formatResultReason = (reason) => {
-    if (!reason || reason === "valid-hand") return t("validHand");
-    return reason;
-  };
-
   return (
     <div style={styles.container}>
       <style>
@@ -2103,9 +2209,13 @@ function GamePage() {
           >
             <div style={{ position: "relative" }}>
               <img 
-                src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${opponentId}`} 
+                src={getPlayerPhoto(opponentId)}
                 alt={t("opponent")} 
                 style={styles.avatar(isOpponentTurn)} 
+                onError={(event) => {
+                  event.currentTarget.onerror = null;
+                  event.currentTarget.src = DEFAULT_PROFILE_PHOTO;
+                }}
               />
               <div style={styles.cardCount}>{opponentCardCount}</div>
             </div>
@@ -2306,36 +2416,56 @@ function GamePage() {
           <div
             style={{
               ...styles.gameOverPopup,
-              animation: isWinning
+              animation: didCurrentUserWin
                 ? "winPopup 0.48s ease-out, winGlow 1.2s ease-in-out 0.15s 2"
-                : "none",
+                : "winPopup 0.42s ease-out",
             }}
           >
-            <h3 style={styles.gameOverTitle}>{t("gameOver")}</h3>
-            <div style={styles.gameOverSubtitle}>
-              {t("winner")}: {getPlayerName(gameResult.winnerId)}
-            </div>
-            <div style={styles.gameOverDetails}>
-              <div>{t("pattern")}: {gameResult.winnerPattern || "4-3-3-1"}</div>
-              <div>{t("reason")}: {formatResultReason(gameResult.reason)}</div>
-              {gameResult.jokerBonus && <div>{t("jokerBonusDetail")}</div>}
-              {isPracticeGame ? (
-                <div>{t("practiceFreeNote")}</div>
-              ) : (
-                <>
-                  <div>{t("playedWith")}: {formatBirr(myFeesPaid)}</div>
-                  <div>{t("totalRoomAmount")}: {formatBirr(settledRoundPot || totalPot)}</div>
-                  <div>{t("youReceived")}: {formatBirr(
-                    gameEnded ? myRoundReceived : myProjectedWin
-                  )}</div>
-                </>
-              )}
-              <div>
-                {t("ended")}:{" "}
-                {gameResult.endedAt
-                  ? new Date(gameResult.endedAt).toLocaleString()
-                  : t("notAvailable")}
+            <div style={styles.resultHero(didCurrentUserWin)}>
+              <div style={styles.resultHeroIcon(didCurrentUserWin)}>
+                {didCurrentUserWin ? <Trophy size={29} /> : <Hand size={27} />}
               </div>
+              <div style={styles.resultHeroCopy}>
+                <span style={styles.resultEyebrow}>
+                  {didCurrentUserWin ? "🎉 " : "🤝 "}{t("gameOver")}
+                </span>
+                <h3 style={styles.gameOverTitle}>
+                  {didCurrentUserWin ? t("victoryTitle") : t("defeatTitle")}
+                </h3>
+                <div style={styles.gameOverSubtitle}>
+                  🏆 {t("winner")}: {getPlayerName(gameResult.winnerId)}
+                </div>
+              </div>
+            </div>
+
+            <div style={styles.resultHandPanel}>
+              <div style={styles.resultHandTitle}>
+                <span>👑 {getPlayerName(gameResult.winnerId)}</span>
+                <span style={{ color: colors.gold }}>{t("winningCards")}</span>
+              </div>
+              <div style={styles.resultCardGroups}>
+                {getArrangedCardGroups(winnerCards).map((group) => (
+                  <div key={`winner-${group.rank}`} style={styles.resultCardGroup}>
+                    {group.cards.map((card, cardIndex) => (
+                      <div
+                        key={`winner-${group.rank}-${card.suit}-${cardIndex}`}
+                        style={{
+                          ...styles.resultCard,
+                          marginLeft: cardIndex === 0 ? 0 : styles.resultCard.marginLeft,
+                          color: card.color || "#111",
+                        }}
+                      >
+                        {renderCardFace(card)}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={styles.resultWinAmount}>
+              <Trophy size={17} />
+              <span>{t("winAmount")}: {formatBirr(settledRoundPayout || 0)}</span>
             </div>
             <div style={styles.gameOverActions}>
               <button
@@ -2343,14 +2473,14 @@ function GamePage() {
                 onClick={handleLeaveGame}
                 disabled={isActionLoading}
               >
-                {t("leave")}
+                <LogOut size={16} /> {t("leave")}
               </button>
               <button
                 style={styles.btnWin}
                 onClick={handlePlayAgain}
                 disabled={isActionLoading}
               >
-                {isActionLoading ? t("starting") : t("playAgain")}
+                <RefreshCw size={16} /> {isActionLoading ? t("starting") : t("playAgain")}
               </button>
             </div>
           </div>
@@ -2397,16 +2527,20 @@ function GamePage() {
       <div style={styles.playerArea}>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
           <img
-            src={user?.photo || "https://cdn-icons-png.flaticon.com/512/149/149071.png"}
+            src={getPlayerPhoto(user?.telegramId)}
             alt={t("you")}
             style={{
               ...styles.avatar(isMyTurn),
               width: "clamp(50px, 9vw, 65px)",
               height: "clamp(50px, 9vw, 65px)",
             }}
+            onError={(event) => {
+              event.currentTarget.onerror = null;
+              event.currentTarget.src = DEFAULT_PROFILE_PHOTO;
+            }}
           />
           <div style={styles.playerName(isMyTurn)}>
-            {user ? ((user.username ? `@${user.username}` : "") || user.displayName || user.firstName || t("you")) : t("you")}
+            {getDisplayName(user, t("you"))}
           </div>
           {isMyTurn && (
             <div style={styles.turnLoader}>

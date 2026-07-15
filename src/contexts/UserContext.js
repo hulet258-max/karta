@@ -53,6 +53,7 @@ export const UserProvider = ({ children }) => {
         username: tgUser?.username || "",
         firstName: tgUser?.first_name || "",
         lastName: tgUser?.last_name || "",
+        photoUrl: tgUser?.photo_url || fallbackPhoto || "",
       }),
     });
 
@@ -69,7 +70,7 @@ export const UserProvider = ({ children }) => {
       id: String(id),
       telegramId: String(id),
       ...data.user,
-      photo: tgUser?.photo_url || fallbackPhoto || null,
+      photo: tgUser?.photo_url || data.user?.photoUrl || fallbackPhoto || null,
     };
 
     setUser(nextUser);

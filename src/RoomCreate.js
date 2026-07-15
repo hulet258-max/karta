@@ -7,6 +7,9 @@ import CoinAmount from "./CoinAmount";
 import { MIN_ROOM_ENTRY_BIRR, ROOM_ENTRY_STEP_BIRR, formatBirr, isValidRoomEntryBirr } from "./utils/money";
 import ShareToast from "./ShareToast";
 import TinySpinner from "./TinySpinner";
+import { getDisplayName } from "./utils/displayName";
+
+const DEFAULT_PROFILE_PHOTO = "https://cdn-icons-png.flaticon.com/512/149/149071.png";
 import { sharePreparedTelegramMessage, switchTelegramInlineQuery } from "./utils/telegramShare";
 import { socket } from "./socket"; // 🔌 Import your socket instance
 
@@ -265,20 +268,24 @@ function RoomCreate({ onClose, onRoomCreated }) {
   const privateRoomMaxPlayers = Number(createdRoom?.maxPlayers || 0);
   const canGoToGame = privateRoomCreated && privateRoomMaxPlayers > 0 && privateRoomPlayerCount >= privateRoomMaxPlayers;
   const currentUserId = String(user?.telegramId || user?.id || "");
-  const currentUserName = (user?.username ? `@${user.username}` : "") || user?.displayName || user?.firstName || "";
+  const currentUserName = getDisplayName(user);
   const getPlayerDisplayName = (playerId) => {
     const normalizedId = String(playerId || "");
     const publicProfile = playerProfiles[normalizedId];
-    const profileName = (publicProfile?.username ? `@${publicProfile.username}` : "")
-      || publicProfile?.displayName
-      || publicProfile?.firstName
-      || "";
+    const profileName = getDisplayName(publicProfile);
 
     if (normalizedId === currentUserId) {
       return currentUserName ? `${currentUserName} (${t("you")})` : t("you");
     }
 
     return profileName || t("player");
+  };
+  const getPlayerPhoto = (playerId) => {
+    const normalizedId = String(playerId || "");
+    if (normalizedId === currentUserId) {
+      return user?.photo || user?.photoUrl || DEFAULT_PROFILE_PHOTO;
+    }
+    return playerProfiles[normalizedId]?.photoUrl || DEFAULT_PROFILE_PHOTO;
   };
 
   const styles = {
@@ -454,6 +461,9 @@ function RoomCreate({ onClose, onRoomCreated }) {
     },
     playerPill: {
       ...ui.field,
+      display: "flex",
+      alignItems: "center",
+      gap: "8px",
       borderRadius: "999px",
       padding: "7px 10px",
       color: colors.cream,
@@ -462,6 +472,14 @@ function RoomCreate({ onClose, onRoomCreated }) {
       overflow: "hidden",
       textOverflow: "ellipsis",
       whiteSpace: "nowrap",
+    },
+    playerAvatar: {
+      width: "26px",
+      height: "26px",
+      flex: "0 0 26px",
+      borderRadius: "50%",
+      objectFit: "cover",
+      border: `1px solid ${colors.gold}`,
     },
     telegramBtn: {
       width: "100%",
@@ -665,7 +683,17 @@ function RoomCreate({ onClose, onRoomCreated }) {
             <div style={styles.playerList}>
               {playerList.length ? playerList.map((playerId, index) => (
                 <div style={styles.playerPill} key={`${playerId}-${index}`}>
-                  {index + 1}. {getPlayerDisplayName(playerId)}
+                  <img
+                    src={getPlayerPhoto(playerId)}
+                    alt=""
+                    aria-hidden="true"
+                    style={styles.playerAvatar}
+                    onError={(event) => {
+                      event.currentTarget.onerror = null;
+                      event.currentTarget.src = DEFAULT_PROFILE_PHOTO;
+                    }}
+                  />
+                  <span>{index + 1}. {getPlayerDisplayName(playerId)}</span>
                 </div>
               )) : (
                 <div style={styles.playerPill}>{t("waitingForPlayersToJoin")}</div>
