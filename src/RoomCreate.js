@@ -8,10 +8,10 @@ import { MIN_ROOM_ENTRY_BIRR, ROOM_ENTRY_STEP_BIRR, formatBirr, isValidRoomEntry
 import ShareToast from "./ShareToast";
 import TinySpinner from "./TinySpinner";
 import { getDisplayName } from "./utils/displayName";
-
-const DEFAULT_PROFILE_PHOTO = "https://cdn-icons-png.flaticon.com/512/149/149071.png";
 import { sharePreparedTelegramMessage, switchTelegramInlineQuery } from "./utils/telegramShare";
 import { socket } from "./socket"; // 🔌 Import your socket instance
+
+const DEFAULT_PROFILE_PHOTO = "https://cdn-icons-png.flaticon.com/512/149/149071.png";
 
 function RoomCreate({ onClose, onRoomCreated }) {
   const { user } = useUser();

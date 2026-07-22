@@ -171,6 +171,59 @@ textarea:focus {
     inset 0 1px 0 rgba(255, 255, 255, 0.24);
 }
 
+/* Shared deposit/withdraw layout: keep localized copy and controls inside small Telegram viewports. */
+.money-page {
+  max-width: 100%;
+  padding-left: max(14px, env(safe-area-inset-left)) !important;
+  padding-right: max(14px, env(safe-area-inset-right)) !important;
+  padding-bottom: max(18px, env(safe-area-inset-bottom)) !important;
+}
+
+.money-card,
+.money-card form,
+.money-card fieldset,
+.money-card input,
+.money-card textarea,
+.money-card button,
+.money-card img {
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.money-card p,
+.money-card li,
+.money-card label,
+.money-card div {
+  overflow-wrap: anywhere;
+}
+
+.money-alert {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+@media (max-width: 380px) {
+  .money-page {
+    padding-top: 78px !important;
+    padding-left: max(10px, env(safe-area-inset-left)) !important;
+    padding-right: max(10px, env(safe-area-inset-right)) !important;
+  }
+
+  .money-card {
+    padding: 15px !important;
+  }
+
+  .money-actions {
+    flex-direction: column !important;
+  }
+
+  .money-actions > button {
+    width: 100%;
+    flex: 1 1 auto !important;
+  }
+}
+
 @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .glass-blur {
     -webkit-backdrop-filter: blur(18px) saturate(1.35);

@@ -1,6 +1,6 @@
 // src/GamePage.js
 import React, { useCallback, useState, useEffect, useMemo, useRef } from "react";
-import { Hand, HelpCircle, LogOut, RefreshCw, ScrollText, Trophy, X } from "lucide-react";
+import { CircleAlert, DollarSign, Hand, HelpCircle, LogOut, Pause, PhoneCall, Play, RefreshCw, Trophy, UserPlus, X } from "lucide-react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useSettings } from "./contexts/SettingsContext";
 import { useUser } from "./contexts/UserContext";
@@ -13,6 +13,7 @@ const rankOrder = ["A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", 
 const PAGE_TOP_PADDING = "80px";
 const DEFAULT_PROFILE_PHOTO = "https://cdn-icons-png.flaticon.com/512/149/149071.png";
 const DEBUG_GAME_EVENTS = process.env.REACT_APP_DEBUG_GAME_EVENTS === "true";
+const TURN_INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000;
 const suitOrder = ["♠", "♥", "♦", "♣"];
 
 const isJoker = (card) => String(card?.rank || "").toUpperCase() === "JOKER";
@@ -122,14 +123,17 @@ function GamePage() {
   const [isDealing, setIsDealing] = useState(false);
   
   // ✨ UI feedback states
-  const [errorMsg, setErrorMsg] = useState("");
+  const [gameNotification, setGameNotification] = useState(null);
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+  const [dismissedTimeoutKey, setDismissedTimeoutKey] = useState("");
   const [showProgress, setShowProgress] = useState(false);
   const [practiceHelpDismissed, setPracticeHelpDismissed] = useState(false);
   const [leaveSummary, setLeaveSummary] = useState(null);
   const [playerProfiles, setPlayerProfiles] = useState({});
   const [insufficientBalancePopup, setInsufficientBalancePopup] = useState(null);
+  const [rematchRemovalNotice, setRematchRemovalNotice] = useState(null);
+  const [rematchFeeDraft, setRematchFeeDraft] = useState("");
   const [pickedCardDecision, setPickedCardDecision] = useState(null);
   const [opponentPickIndicator, setOpponentPickIndicator] = useState(null);
   const [showGameRules, setShowGameRules] = useState(false);
@@ -139,6 +143,7 @@ function GamePage() {
   const lastCallNonceRef = useRef(null);
   const laidHistoryRef = useRef(null);
   const isLeavingRef = useRef(false);
+  const notificationTimerRef = useRef(null);
 
   useEffect(() => {
     if (room || !routeRoomId || !user?.telegramId) return;
@@ -165,6 +170,7 @@ function GamePage() {
             roomId: routeRoomId,
             userId: user.telegramId,
             socketId: socket.id,
+            resume: true,
           }),
         });
         const data = await response.json();
@@ -202,11 +208,18 @@ function GamePage() {
           roomId: activeRoomId,
           userId: user.telegramId,
           socketId: socket.id,
+          resume: true,
         }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.success) {
-        if (response.status === 404) navigate("/second", { replace: true });
+        if (
+          response.status === 404 ||
+          data.code === "ROOM_NOT_JOINABLE" ||
+          data.code === "ROOM_MEMBERSHIP_ENDED"
+        ) {
+          navigate("/second", { replace: true });
+        }
         return;
       }
 
@@ -277,6 +290,39 @@ function GamePage() {
     };
   }, [navigate, room]);
 
+  useEffect(() => {
+    if (!room || !user?.telegramId) return undefined;
+    const activeRoomId = String(room.id || room.roomId || room.name);
+    const handleRematchRemoved = (data = {}) => {
+      if (
+        String(data.roomId) === activeRoomId &&
+        String(data.userId) === String(user.telegramId)
+      ) {
+        setRematchRemovalNotice(data.reason || "no-response");
+      }
+    };
+    socket.on("rematch_removed", handleRematchRemoved);
+    return () => socket.off("rematch_removed", handleRematchRemoved);
+  }, [room, user?.telegramId]);
+
+  useEffect(() => {
+    if (!room || !user?.telegramId) return undefined;
+    const activeRoomId = String(room.id || room.roomId || room.name);
+    const handleReturnedToLobby = (data = {}) => {
+      if (
+        String(data.roomId) === activeRoomId &&
+        String(data.userId) === String(user.telegramId)
+      ) {
+        navigate("/second", {
+          replace: true,
+          state: { rematchNotice: "not-all-players-agreed" },
+        });
+      }
+    };
+    socket.on("rematch_returned_to_lobby", handleReturnedToLobby);
+    return () => socket.off("rematch_returned_to_lobby", handleReturnedToLobby);
+  }, [navigate, room, user?.telegramId]);
+
   // Extract game state from the state variable
   const playerCards = useMemo(() => gameState.playerCards || {}, [gameState.playerCards]);
   const laidCards = useMemo(() => gameState.laidCards || [], [gameState.laidCards]);
@@ -286,6 +332,7 @@ function GamePage() {
   const gamePaused = Boolean(gameState.paused || gameState.leaveVote?.active);
   const isRoomCreator = Boolean(user && room && String(room.creatorId) === String(user.telegramId));
   const roomStats = gameState.roomStats || room?.roomStats || {};
+  const isManagedBotRoom = Boolean(gameState.managedBotRoom || roomStats.managedBotRoom);
   const isPracticeGame = Boolean(gameState.practice || roomStats.practice);
   const botProfile = roomStats.botProfile || gameState.botProfile || room?.roomStats?.botProfile || null;
   const gameHistory = roomStats.games || [];
@@ -301,6 +348,15 @@ function GamePage() {
     roomStats.finalizedAt || "",
   ].join(":");
   const myUserId = user?.telegramId ? String(user.telegramId) : "";
+  const rematch = gameState.rematch?.active ? gameState.rematch : null;
+  const rematchReadyIds = new Set((rematch?.readyPlayerIds || []).map(String));
+  const isRematchReady = Boolean(myUserId && rematchReadyIds.has(myUserId));
+  const rematchDeadline = new Date(rematch?.deadlineAt || "").getTime();
+  const rematchSecondsRemaining = Number.isFinite(rematchDeadline)
+    ? Math.max(0, Math.ceil((rematchDeadline - nowTick) / 1000))
+    : 0;
+  const isPreviousRoundSpectator = Boolean(gameState.previousRoundSpectator);
+  const proposedRematchFee = Number(rematch?.proposedEntryFee || room?.entryFee || 0);
   const didCurrentUserWin = Boolean(gameResult?.winnerId && String(gameResult.winnerId) === myUserId);
   const revealedHands = gameResult?.revealedHands || (gameEnded ? playerCards : {});
   const winnerCards = revealedHands?.[String(gameResult?.winnerId)] || [];
@@ -325,6 +381,27 @@ function GamePage() {
     (roomStats.currentRoundPlayers || []).some((playerId) => String(playerId) === myUserId)
       ? Number(roomStats.entryFee || room?.entryFee || 0)
       : 0;
+  const currentRoundLeavePenalty = currentRoundFeeAtRisk / 2;
+  const lastLayTargetsCurrentTurn = gameState.lastLay?.targetPlayerId &&
+    String(gameState.lastLay.targetPlayerId) === String(turn || "");
+  const turnActivityAt = gameState.turnActivityAt ||
+    (lastLayTargetsCurrentTurn ? gameState.lastLay?.at : null) ||
+    gameState.lastActivityAt;
+  const turnActivityTime = Date.parse(turnActivityAt || "");
+  const timedOutOpponentId = String(turn || "") !== myUserId ? String(turn || "") : "";
+  const opponentTurnTimedOut = Boolean(
+    !isPracticeGame &&
+    gameState.status === "playing" &&
+    !gameEnded &&
+    !gamePaused &&
+    currentRoundFeeAtRisk > 0 &&
+    timedOutOpponentId &&
+    Number.isFinite(turnActivityTime) &&
+    nowTick - turnActivityTime >= TURN_INACTIVITY_TIMEOUT_MS
+  );
+  const opponentTimeoutKey = opponentTurnTimedOut
+    ? `${timedOutOpponentId}:${turnActivityAt}`
+    : "";
   const getPlayerName = useCallback((playerId) => {
     const normalizedId = String(playerId || "");
     if (String(user?.telegramId || "") === normalizedId) {
@@ -554,11 +631,34 @@ function GamePage() {
     return () => clearInterval(timer);
   }, []);
 
-  // Helper to show errors
-  const showError = (msg) => {
-    setErrorMsg(msg);
-    setTimeout(() => setErrorMsg(""), 3000); // clear after 3 seconds
-  };
+  useEffect(() => {
+    if (!opponentTurnTimedOut || !opponentTimeoutKey) return;
+    if (dismissedTimeoutKey === opponentTimeoutKey) return;
+    setShowLeaveConfirm(true);
+  }, [dismissedTimeoutKey, opponentTimeoutKey, opponentTurnTimedOut]);
+
+  const showGameNotification = useCallback((type, message, durationMs) => {
+    if (!message) return;
+    if (notificationTimerRef.current) clearTimeout(notificationTimerRef.current);
+    const id = `${Date.now()}-${Math.random()}`;
+    setGameNotification({ id, type, message });
+    notificationTimerRef.current = setTimeout(() => {
+      setGameNotification((current) => current?.id === id ? null : current);
+      notificationTimerRef.current = null;
+    }, durationMs ?? (type === "call" ? 4000 : 3000));
+  }, []);
+  const showError = useCallback(
+    (message) => showGameNotification("error", message, 3000),
+    [showGameNotification]
+  );
+  const showCall = useCallback(
+    (message) => showGameNotification("call", message, 4000),
+    [showGameNotification]
+  );
+
+  useEffect(() => () => {
+    if (notificationTimerRef.current) clearTimeout(notificationTimerRef.current);
+  }, []);
 
   useEffect(() => {
     if (!user?.telegramId) return undefined;
@@ -572,15 +672,14 @@ function GamePage() {
 
       playSound("call");
       const callerName = getPlayerName(payload.fromUserId);
-      setErrorMsg(t("playerCallNotification", { player: callerName }));
-      setTimeout(() => setErrorMsg(""), 4000);
+      showCall(t("playerCallNotification", { player: callerName }));
     };
 
     socket.on("player_call", handlePlayerCall);
     return () => {
       socket.off("player_call", handlePlayerCall);
     };
-  }, [getPlayerName, playSound, room?.id, room?.roomId, routeRoomId, t, user?.telegramId]);
+  }, [getPlayerName, playSound, room?.id, room?.roomId, routeRoomId, showCall, t, user?.telegramId]);
 
   useEffect(() => {
     const savedCall = gameState.lastCall;
@@ -590,9 +689,8 @@ function GamePage() {
     lastCallNonceRef.current = savedCall.nonce;
     playSound("call");
     const callerName = getPlayerName(savedCall.fromUserId);
-    setErrorMsg(t("playerCallNotification", { player: callerName }));
-    setTimeout(() => setErrorMsg(""), 4000);
-  }, [gameState.lastCall, getPlayerName, playSound, t, user?.telegramId]);
+    showCall(t("playerCallNotification", { player: callerName }));
+  }, [gameState.lastCall, getPlayerName, playSound, showCall, t, user?.telegramId]);
 
   // Always arrange cards in grouped order for display
   const groupedAndSortedCards = myCards
@@ -699,6 +797,12 @@ function GamePage() {
         
         // Handle backend errors (like out of turn, etc)
         if (!response.ok || data.error) {
+          if (data.redisData) {
+            setGameState(data.redisData);
+            if (Array.isArray(data.redisData.players)) {
+              setPlayers(data.redisData.players);
+            }
+          }
           showError(data.error || t("actionFailed"));
           console.error(`❌ Server error from ${endpoint}:`, data);
         } else {
@@ -764,9 +868,19 @@ function GamePage() {
       });
       const data = await response.json();
       if (!response.ok || data.error) {
+        if (data.redisData) {
+          setGameState(data.redisData);
+          if (Array.isArray(data.redisData.players)) setPlayers(data.redisData.players);
+        }
         if (endpoint === "/gameplay/play-again" && data.code === "INSUFFICIENT_BALANCE" && data.depositRequired) {
           setInsufficientBalancePopup({ entryFee: data.entryFee });
           await refreshUser?.();
+          return null;
+        }
+        if (endpoint === "/gameplay/leave-game" && data.code === "TURN_TIMEOUT_NOT_REACHED") {
+          setDismissedTimeoutKey(opponentTimeoutKey);
+          setShowLeaveConfirm(false);
+          showError(t("timeoutNotReached"));
           return null;
         }
         showError(data.error || t("actionFailed"));
@@ -783,13 +897,21 @@ function GamePage() {
     } finally {
       setIsActionLoading(false);
     }
-  }, [BASE_URL, refreshUser, room, t, user]);
+  }, [BASE_URL, opponentTimeoutKey, refreshUser, room, showError, t, user]);
 
-  const performLeaveGame = useCallback(async (forceLeave = false) => {
+  const performLeaveGame = useCallback(async (forceLeave = false, expectPenaltyFree = false) => {
     if (isLeavingRef.current) return;
     isLeavingRef.current = true;
-    const result = await postGameplayAction("/gameplay/leave-game", { forceLeave });
+    const result = await postGameplayAction("/gameplay/leave-game", {
+      forceLeave,
+      expectPenaltyFree,
+    });
     const finalStats = result?.redisData?.roomStats;
+    if (result?.managedDepartureCompleted) {
+      await refreshUser?.();
+      navigate("/second", { replace: true });
+      return;
+    }
     if (forceLeave && result) {
       await refreshUser?.();
       navigate("/second", { replace: true });
@@ -822,8 +944,13 @@ function GamePage() {
 
   const handleConfirmLeaveGame = useCallback(() => {
     setShowLeaveConfirm(false);
-    performLeaveGame(true);
-  }, [performLeaveGame]);
+    performLeaveGame(true, opponentTurnTimedOut);
+  }, [opponentTurnTimedOut, performLeaveGame]);
+
+  const handleContinueWaiting = useCallback(() => {
+    setDismissedTimeoutKey(opponentTimeoutKey);
+    setShowLeaveConfirm(false);
+  }, [opponentTimeoutKey]);
 
   const handleReturnToLobby = useCallback(() => {
     performLeaveGame(false);
@@ -839,8 +966,47 @@ function GamePage() {
   };
 
   const handlePlayAgain = async () => {
-    await postGameplayAction("/gameplay/play-again");
+    const result = await postGameplayAction("/gameplay/play-again", {
+      feeVersion: rematch?.feeVersion,
+    });
+    if (result?.roomRotated) {
+      navigate("/second", {
+        replace: true,
+        state: {
+          managedRoomRotated: true,
+          replacementRoom: result.replacementRoom || null,
+        },
+      });
+    }
   };
+
+  const handleAddRematchPlayer = async () => {
+    await postGameplayAction("/gameplay/rematch/add-player");
+  };
+
+  const handleHoldRematchCountdown = async () => {
+    await postGameplayAction("/gameplay/rematch/hold");
+  };
+
+  const handleResumeRematchCountdown = async () => {
+    await postGameplayAction("/gameplay/rematch/resume");
+  };
+
+  const handleCancelRematchRecruitment = async () => {
+    await postGameplayAction("/gameplay/rematch/cancel-add");
+  };
+
+  const handleUpdateRematchFee = async () => {
+    await postGameplayAction("/gameplay/rematch/update-fee", {
+      entryFee: Number(rematchFeeDraft),
+    });
+  };
+
+  useEffect(() => {
+    if (gameState.rematch?.active) {
+      setRematchFeeDraft(String(proposedRematchFee || ""));
+    }
+  }, [gameState.rematch?.active, gameState.rematch?.feeVersion, proposedRematchFee]);
 
   const handleInsertPickedCard = () => {
     setPickedCardDecision(null);
@@ -922,23 +1088,46 @@ function GamePage() {
       paddingTop: PAGE_TOP_PADDING,
       boxSizing: "border-box",
     },
-    errorToast: {
+    gameNotification: (type) => ({
       position: "absolute",
-      top: "15%",
+      top: `calc(${PAGE_TOP_PADDING} + 16px)`,
       left: "50%",
       transform: "translateX(-50%)",
-      background: "#d9534f",
-      color: "white",
-      padding: "10px 20px",
+      width: "min(420px, calc(100vw - 28px))",
+      minHeight: "48px",
+      boxSizing: "border-box",
+      display: "flex",
+      alignItems: "center",
+      gap: "11px",
+      background: type === "call"
+        ? "linear-gradient(145deg, rgba(14,75,40,0.97), rgba(4,34,20,0.97))"
+        : "linear-gradient(145deg, rgba(91,25,28,0.98), rgba(45,10,15,0.98))",
+      color: colors.cream,
+      padding: "10px 14px",
       borderRadius: "10px",
-      fontWeight: "bold",
-      border: "1px solid rgba(255,255,255,0.36)",
-      boxShadow: "0 14px 30px rgba(0,0,0,0.42), inset 0 1px 0 rgba(255,255,255,0.42)",
+      fontWeight: 700,
+      lineHeight: 1.3,
+      border: `1px solid ${type === "call" ? colors.gold : "#ff7777"}`,
+      boxShadow: type === "call"
+        ? "0 14px 30px rgba(0,0,0,0.42), 0 0 18px rgba(218,170,63,0.18)"
+        : "0 14px 30px rgba(0,0,0,0.42), 0 0 18px rgba(239,68,68,0.22)",
+      backdropFilter: "blur(12px) saturate(1.15)",
+      WebkitBackdropFilter: "blur(12px) saturate(1.15)",
       zIndex: 1000,
-      opacity: errorMsg ? 1 : 0,
-      transition: "opacity 0.3s ease",
       pointerEvents: "none",
-    },
+      animation: "gameNotificationIn 180ms ease-out both",
+    }),
+    gameNotificationIcon: (type) => ({
+      width: "30px",
+      height: "30px",
+      flex: "0 0 30px",
+      display: "grid",
+      placeItems: "center",
+      borderRadius: "8px",
+      color: type === "call" ? "#18200d" : "#fff",
+      background: type === "call" ? colors.gold : "#d9424b",
+      boxShadow: "inset 0 1px 0 rgba(255,255,255,0.35)",
+    }),
     centerArea: {
       position: "absolute",
       top: "45%",
@@ -1093,7 +1282,7 @@ function GamePage() {
     },
     playerArea: {
       position: "absolute",
-      bottom: "2vh", 
+      bottom: "calc(2vh + 2rem + env(safe-area-inset-bottom, 0px))",
       left: "0",
       width: "100%",
       display: "flex",
@@ -1205,28 +1394,28 @@ function GamePage() {
       alignItems: "center",
       justifyContent: "center",
       zIndex: 2000,
-      padding: "16px",
+      padding: "10px",
     },
     gameOverPopup: {
-      width: "min(430px, 94vw)",
-      maxHeight: "calc(100dvh - 32px)",
+      width: "min(390px, 94vw)",
+      maxHeight: "calc(100dvh - 20px)",
       overflowY: "auto",
       ...glassPanel,
       background: "linear-gradient(155deg, rgba(16,67,35,0.98), rgba(4,24,13,0.98))",
       border: `1px solid ${colors.gold}`,
-      borderRadius: "18px",
-      padding: "14px",
+      borderRadius: "14px",
+      padding: "10px",
       boxShadow: "0 28px 70px rgba(0,0,0,0.72), 0 0 38px rgba(241,196,15,0.16), inset 0 1px 0 rgba(255,255,255,0.22)",
     },
     gameOverTitle: {
       margin: 0,
-      fontSize: "clamp(1.12rem, 4vw, 1.45rem)",
+      fontSize: "clamp(0.98rem, 3.6vw, 1.18rem)",
       color: colors.gold,
     },
     gameOverSubtitle: {
-      marginTop: "3px",
+      marginTop: "1px",
       opacity: 0.85,
-      fontSize: "0.9rem",
+      fontSize: "0.76rem",
     },
     gameOverDetails: {
       marginTop: "14px",
@@ -1237,29 +1426,28 @@ function GamePage() {
       lineHeight: 1.5,
     },
     gameOverActions: {
-      marginTop: "16px",
-      display: "flex",
-      justifyContent: "center",
-      flexWrap: "wrap",
-      gap: "10px",
+      marginTop: "9px",
+      display: "grid",
+      gridTemplateColumns: "minmax(0, 0.8fr) minmax(0, 1.2fr)",
+      gap: "7px",
     },
     resultHero: (won) => ({
       position: "relative",
       overflow: "hidden",
       display: "flex",
       alignItems: "center",
-      gap: "10px",
-      padding: "10px 12px",
-      borderRadius: "13px",
+      gap: "8px",
+      padding: "7px 9px",
+      borderRadius: "10px",
       background: won
         ? "linear-gradient(135deg, rgba(241,196,15,0.22), rgba(42,155,78,0.2))"
         : "linear-gradient(135deg, rgba(111,124,144,0.22), rgba(28,35,48,0.35))",
       border: won ? "1px solid rgba(255,226,79,0.55)" : "1px solid rgba(186,199,218,0.28)",
     }),
     resultHeroIcon: (won) => ({
-      width: "42px",
-      height: "42px",
-      flex: "0 0 42px",
+      width: "32px",
+      height: "32px",
+      flex: "0 0 32px",
       display: "grid",
       placeItems: "center",
       borderRadius: "50%",
@@ -1267,26 +1455,27 @@ function GamePage() {
       background: won
         ? "linear-gradient(180deg, #fff05f, #d7a91f)"
         : "linear-gradient(180deg, #657086, #31394a)",
-      boxShadow: won ? "0 0 24px rgba(255,232,92,0.48)" : "0 9px 20px rgba(0,0,0,0.3)",
+      boxShadow: won ? "0 0 16px rgba(255,232,92,0.4)" : "0 6px 14px rgba(0,0,0,0.3)",
+      fontSize: "1.15rem",
     }),
     resultHeroCopy: {
       minWidth: 0,
       display: "flex",
       flexDirection: "column",
-      gap: "4px",
+      gap: "2px",
     },
     resultEyebrow: {
       color: "rgba(255,255,255,0.68)",
-      fontSize: "0.72rem",
+      fontSize: "0.62rem",
       fontWeight: 800,
       letterSpacing: "0.12em",
       textTransform: "uppercase",
     },
     resultHandPanel: {
       minWidth: 0,
-      marginTop: "10px",
-      padding: "9px",
-      borderRadius: "11px",
+      marginTop: "7px",
+      padding: "7px",
+      borderRadius: "9px",
       background: "rgba(241,196,15,0.08)",
       border: "1px solid rgba(241,196,15,0.3)",
     },
@@ -1295,8 +1484,8 @@ function GamePage() {
       alignItems: "center",
       justifyContent: "space-between",
       gap: "8px",
-      marginBottom: "7px",
-      fontSize: "0.72rem",
+      marginBottom: "5px",
+      fontSize: "0.66rem",
       fontWeight: 800,
     },
     resultCardGroups: {
@@ -1313,9 +1502,9 @@ function GamePage() {
       background: "rgba(0,0,0,0.18)",
     },
     resultCard: {
-      width: "clamp(24px, 6vw, 31px)",
-      height: "clamp(36px, 8.5vw, 45px)",
-      marginLeft: "-6px",
+      width: "clamp(22px, 5.6vw, 28px)",
+      height: "clamp(33px, 8vw, 41px)",
+      marginLeft: "-5px",
       paddingTop: "3px",
       display: "flex",
       flexDirection: "column",
@@ -1335,15 +1524,114 @@ function GamePage() {
       alignItems: "center",
       justifyContent: "center",
       gap: "7px",
-      marginTop: "10px",
-      padding: "9px",
-      borderRadius: "11px",
+      marginTop: "7px",
+      padding: "6px 8px",
+      borderRadius: "9px",
       color: colors.gold,
       background: "rgba(241,196,15,0.1)",
       border: "1px solid rgba(241,196,15,0.26)",
-      fontSize: "0.84rem",
+      fontSize: "0.75rem",
       fontWeight: 800,
     },
+    rematchPanel: {
+      margin: "8px 0 0",
+      padding: "8px",
+      borderRadius: "10px",
+      background: "rgba(255,255,255,0.065)",
+      border: "1px solid rgba(255,255,255,0.12)",
+    },
+    rematchTimer: {
+      marginBottom: "6px",
+      color: "rgba(255,255,255,0.72)",
+      fontSize: "0.72rem",
+      fontWeight: 750,
+      textAlign: "center",
+      lineHeight: 1.3,
+    },
+    rematchTimerNumber: {
+      display: "inline-block",
+      margin: "0 2px",
+      color: "#ff6262",
+      fontSize: "0.86rem",
+      fontWeight: 950,
+      textShadow: "0 0 8px rgba(255,65,65,0.72)",
+    },
+    feeUpdatedBanner: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: "8px",
+      flexWrap: "wrap",
+      marginBottom: "7px",
+      padding: "7px 9px",
+      borderRadius: "10px",
+      border: "1px solid rgba(255,120,80,0.55)",
+      background: "linear-gradient(135deg, rgba(255,90,60,0.22), rgba(255,180,40,0.12))",
+      boxShadow: "0 0 14px rgba(255,90,40,0.22)",
+    },
+    feeChipOld: {
+      opacity: 0.75,
+      textDecoration: "line-through",
+      fontSize: "0.72rem",
+      fontWeight: 750,
+      color: "rgba(255,220,200,0.85)",
+    },
+    feeChipArrow: {
+      fontSize: "0.85rem",
+      fontWeight: 900,
+      color: "#ffd166",
+    },
+    feeChipNew: {
+      fontSize: "0.92rem",
+      fontWeight: 950,
+      color: "#ff8f6b",
+      textShadow: "0 0 10px rgba(255,100,60,0.55)",
+      letterSpacing: "0.02em",
+    },
+    feeChipTag: {
+      fontSize: "0.58rem",
+      fontWeight: 850,
+      textTransform: "uppercase",
+      letterSpacing: "0.06em",
+      padding: "2px 6px",
+      borderRadius: "999px",
+      background: "rgba(255,100,70,0.28)",
+      color: "#ffd0c0",
+      border: "1px solid rgba(255,140,100,0.4)",
+    },
+    feeRow: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: "6px",
+      marginBottom: "6px",
+      fontSize: "0.74rem",
+      fontWeight: 850,
+    },
+    compactRematchButton: {
+      minWidth: 0,
+      width: "100%",
+      padding: "7px 8px",
+      borderRadius: "7px",
+      fontSize: "0.72rem",
+      lineHeight: 1.1,
+      whiteSpace: "normal",
+    },
+    rematchIconButton: (active = false) => ({
+      width: "30px",
+      height: "30px",
+      flex: "0 0 30px",
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: 0,
+      borderRadius: "8px",
+      border: active ? "1px solid rgba(255,224,92,0.65)" : "1px solid rgba(255,255,255,0.2)",
+      background: active ? "rgba(241,196,15,0.18)" : "rgba(255,255,255,0.07)",
+      color: active ? colors.gold : colors.cream,
+      cursor: "pointer",
+      boxShadow: active ? "0 0 10px rgba(241,196,15,0.2)" : "none",
+    }),
     confirmOverlay: {
       position: "absolute",
       inset: 0,
@@ -1424,6 +1712,28 @@ function GamePage() {
       lineHeight: 1.45,
       fontSize: "0.88rem",
       opacity: 0.9,
+    },
+    leavePenaltyWarning: {
+      margin: "12px 0 0",
+      padding: "10px 12px",
+      borderRadius: "8px",
+      border: "1px solid rgba(255, 82, 82, 0.72)",
+      background: "rgba(160, 18, 18, 0.28)",
+      color: "#ff6b6b",
+      fontSize: "0.9rem",
+      fontWeight: 900,
+      lineHeight: 1.45,
+    },
+    timeoutFreeNotice: {
+      margin: "12px 0 0",
+      padding: "10px 12px",
+      borderRadius: "8px",
+      border: "1px solid rgba(99, 214, 139, 0.7)",
+      background: "rgba(25, 126, 66, 0.24)",
+      color: "#78e6a0",
+      fontSize: "0.9rem",
+      fontWeight: 900,
+      lineHeight: 1.45,
     },
     confirmActions: {
       display: "flex",
@@ -1900,7 +2210,7 @@ function GamePage() {
       targetUserId: callTargetId,
     });
     setCallCooldownUntil(Date.now() + 10000);
-    showError(t("playerCallSent", { player: getPlayerName(callTargetId) }));
+    showCall(t("playerCallSent", { player: getPlayerName(callTargetId) }));
   };
   const formatVote = (vote) => {
     if (vote === "continue") return t("continue");
@@ -1975,11 +2285,27 @@ function GamePage() {
             from { filter: drop-shadow(0 0 4px rgba(239,68,68,0.75)) drop-shadow(0 0 8px rgba(239,68,68,0.55)); }
             to { filter: drop-shadow(0 0 8px #ef4444) drop-shadow(0 0 18px rgba(239,68,68,0.95)); }
           }
+          @keyframes gameNotificationIn {
+            from { opacity: 0; transform: translate(-50%, -8px) scale(0.98); }
+            to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+          }
           .laid-history::-webkit-scrollbar { display: none; }
         `}
       </style>
       {/* ✨ Error Notification Toast */}
-      {errorMsg && <div style={styles.errorToast}>{errorMsg}</div>}
+      {gameNotification && (
+        <div
+          key={gameNotification.id}
+          style={styles.gameNotification(gameNotification.type)}
+          role={gameNotification.type === "error" ? "alert" : "status"}
+          aria-live={gameNotification.type === "error" ? "assertive" : "polite"}
+        >
+          <span style={styles.gameNotificationIcon(gameNotification.type)} aria-hidden="true">
+            {gameNotification.type === "call" ? <PhoneCall size={18} /> : <CircleAlert size={18} />}
+          </span>
+          <span>{gameNotification.message}</span>
+        </div>
+      )}
 
       <div style={styles.roomInfoBanner}>
         <button
@@ -1997,7 +2323,7 @@ function GamePage() {
           title={t("gameProgress")}
           onClick={() => setShowProgress((isOpen) => !isOpen)}
         >
-          <ScrollText size={20} />
+          <DollarSign size={20} />
         </button>
       </div>
 
@@ -2236,10 +2562,24 @@ function GamePage() {
       {showLeaveConfirm && (
         <div style={styles.confirmOverlay}>
           <div style={styles.confirmPopup}>
-            <h3 style={styles.confirmTitle}>{t("leaveGameTitle")}</h3>
+            <h3 style={styles.confirmTitle}>
+              {opponentTurnTimedOut ? t("opponentNotRespondingTitle") : t("leaveGameTitle")}
+            </h3>
             <p style={styles.confirmText}>
-              {t("leaveGameText")}
+              {opponentTurnTimedOut
+                ? t("opponentNotRespondingText", { player: getPlayerName(timedOutOpponentId) })
+                : t("leaveGameText")}
             </p>
+            {opponentTurnTimedOut && (
+              <p style={styles.timeoutFreeNotice} role="status">
+                {t("leaveWithoutDeductionNotice")}
+              </p>
+            )}
+            {!opponentTurnTimedOut && currentRoundLeavePenalty > 0 && (
+              <p style={styles.leavePenaltyWarning} role="alert">
+                {t("leavePenaltyWarning", { amount: formatBirr(currentRoundLeavePenalty) })}
+              </p>
+            )}
             <div style={styles.gameOverDetails}>
               <div>{t("gamesYouPlayed")}: {completedGamesForYou.length}</div>
               <div>{t("youWon")}: {myCompletedWins}</div>
@@ -2251,17 +2591,19 @@ function GamePage() {
             <div style={styles.confirmActions}>
               <button
                 style={styles.confirmCancelBtn}
-                onClick={() => setShowLeaveConfirm(false)}
+                onClick={opponentTurnTimedOut
+                  ? handleContinueWaiting
+                  : () => setShowLeaveConfirm(false)}
                 disabled={isActionLoading}
               >
-                {t("cancel")}
+                {opponentTurnTimedOut ? t("continueWaiting") : t("cancel")}
               </button>
               <button
                 style={styles.confirmLeaveBtn}
                 onClick={handleConfirmLeaveGame}
                 disabled={isActionLoading}
               >
-                {t("ok")}
+                {opponentTurnTimedOut ? t("leaveWithoutDeduction") : t("confirmLeaveYes")}
               </button>
             </div>
           </div>
@@ -2411,7 +2753,7 @@ function GamePage() {
         </div>
       )}
 
-      {gameEnded && gameResult && (
+      {gameEnded && (gameResult || rematch) && (
         <div style={styles.gameOverOverlay}>
           <div
             style={{
@@ -2421,26 +2763,34 @@ function GamePage() {
                 : "winPopup 0.42s ease-out",
             }}
           >
+            {!isPreviousRoundSpectator && gameResult ? <>
             <div style={styles.resultHero(didCurrentUserWin)}>
               <div style={styles.resultHeroIcon(didCurrentUserWin)}>
-                {didCurrentUserWin ? <Trophy size={29} /> : <Hand size={27} />}
+                <span role="img" aria-label={didCurrentUserWin ? "happy" : "sad"}>
+                  {didCurrentUserWin ? "😊" : "😢"}
+                </span>
               </div>
               <div style={styles.resultHeroCopy}>
                 <span style={styles.resultEyebrow}>
-                  {didCurrentUserWin ? "🎉 " : "🤝 "}{t("gameOver")}
+                  {t("gameOver")}
                 </span>
                 <h3 style={styles.gameOverTitle}>
                   {didCurrentUserWin ? t("victoryTitle") : t("defeatTitle")}
                 </h3>
                 <div style={styles.gameOverSubtitle}>
-                  🏆 {t("winner")}: {getPlayerName(gameResult.winnerId)}
+                  {t("winner")}: <strong>{getPlayerName(gameResult.winnerId)}</strong>
                 </div>
               </div>
             </div>
 
+            <div style={styles.resultWinAmount}>
+              <Trophy size={14} />
+              <span>{t("winAmount")}: {formatBirr(settledRoundPayout || 0)}</span>
+            </div>
+
             <div style={styles.resultHandPanel}>
               <div style={styles.resultHandTitle}>
-                <span>👑 {getPlayerName(gameResult.winnerId)}</span>
+                <span>{getPlayerName(gameResult.winnerId)}</span>
                 <span style={{ color: colors.gold }}>{t("winningCards")}</span>
               </div>
               <div style={styles.resultCardGroups}>
@@ -2462,27 +2812,164 @@ function GamePage() {
                 ))}
               </div>
             </div>
-
-            <div style={styles.resultWinAmount}>
-              <Trophy size={17} />
-              <span>{t("winAmount")}: {formatBirr(settledRoundPayout || 0)}</span>
-            </div>
+            </> : (
+              <div style={styles.resultHero(false)}>
+                <div style={styles.resultHeroIcon(false)}><RefreshCw size={27} /></div>
+                <div style={styles.resultHeroCopy}>
+                  <span style={styles.resultEyebrow}>{t("rematchLobby")}</span>
+                  <h3 style={styles.gameOverTitle}>{t("joinNextRound")}</h3>
+                </div>
+              </div>
+            )}
+            {rematch && (
+              <div style={styles.rematchPanel}>
+                <div style={{ fontWeight: 800, marginBottom: "4px", fontSize: "0.78rem" }}>
+                  {t("rematchReadyUp")}
+                </div>
+                <div role="timer" aria-live="polite" style={styles.rematchTimer}>
+                  {rematch.countdownPaused
+                    ? rematch.holdReason === "creator"
+                      ? t("countdownHeldByCreator")
+                      : t("recruitmentPaused")
+                    : rematchSecondsRemaining > 0
+                    ? (() => {
+                        const marker = "__SECONDS__";
+                        const parts = String(t("rematchStartsIn", { seconds: marker })).split(marker);
+                        return <>{parts[0]}<span style={styles.rematchTimerNumber}>{rematchSecondsRemaining}</span>{parts.slice(1).join(marker)}</>;
+                      })()
+                    : t("resolvingRematch")}
+                </div>
+                {rematch.feeUpdatedAt ? (
+                  <div role="alert" style={styles.feeUpdatedBanner}>
+                    <span style={styles.feeChipTag}>{t("feeUpdatedAlert")}</span>
+                    <span style={styles.feeChipOld}>{formatBirr(rematch.previousEntryFee || 0)}</span>
+                    <span style={styles.feeChipArrow}>→</span>
+                    <span style={styles.feeChipNew}>{formatBirr(proposedRematchFee)}</span>
+                    <span style={styles.feeChipTag}>{t("feeUpdatedReagree")}</span>
+                  </div>
+                ) : (
+                  <div style={styles.feeRow}>
+                    <span style={{ opacity: 0.75 }}>{t("nextRoundFee")}</span>
+                    <span style={{ color: colors.gold }}>{formatBirr(proposedRematchFee)}</span>
+                  </div>
+                )}
+                {(rematch.participantIds || []).map((playerId) => (
+                  <div key={`rematch-${playerId}`} style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: "8px",
+                    padding: "2px 0",
+                    fontSize: "0.7rem",
+                  }}>
+                    <span>{getPlayerName(playerId)}</span>
+                    <span style={{ color: rematchReadyIds.has(String(playerId)) ? "#65e895" : "#ffd166" }}>
+                      {rematchReadyIds.has(String(playerId)) ? t("rematchReady") : t("rematchWaiting")}
+                    </span>
+                  </div>
+                ))}
+                {isRoomCreator && !isManagedBotRoom && (
+                  <div style={{ marginTop: "7px", display: "grid", gap: "6px" }}>
+                    <div style={{ display: "flex", gap: "6px" }}>
+                      <input
+                        type="number"
+                        min="10"
+                        step="5"
+                        value={rematchFeeDraft}
+                        onChange={(event) => setRematchFeeDraft(event.target.value)}
+                        aria-label={t("nextRoundFee")}
+                        style={{ flex: 1, minWidth: 0, padding: "6px 7px", borderRadius: "7px", fontSize: "0.72rem" }}
+                      />
+                      <button
+                        style={{ ...styles.btnWin, ...styles.compactRematchButton, width: "auto", flex: "0 0 auto" }}
+                        onClick={handleUpdateRematchFee}
+                        disabled={isActionLoading || Number(rematchFeeDraft) === proposedRematchFee}
+                      >
+                        {t("updateFee")}
+                      </button>
+                    </div>
+                    {rematch.recruiting ? (
+                      <div style={{ display: "flex", justifyContent: "center" }}>
+                        <button
+                          style={styles.rematchIconButton(false)}
+                          onClick={handleCancelRematchRecruitment}
+                          disabled={isActionLoading}
+                          title={t("cancelAddPlayer")}
+                          aria-label={t("cancelAddPlayer")}
+                        >
+                          <X size={15} />
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", justifyContent: "center", gap: "7px" }}>
+                        <button
+                          style={styles.rematchIconButton(rematch.countdownPaused)}
+                          onClick={rematch.countdownPaused
+                            ? handleResumeRematchCountdown
+                            : handleHoldRematchCountdown}
+                          disabled={isActionLoading}
+                          title={rematch.countdownPaused ? t("resumeCountdown") : t("holdCountdown")}
+                          aria-label={rematch.countdownPaused ? t("resumeCountdown") : t("holdCountdown")}
+                        >
+                          {rematch.countdownPaused ? <Play size={14} /> : <Pause size={14} />}
+                        </button>
+                        {(rematch.participantIds || []).length < 4 && (
+                          <button
+                            style={styles.rematchIconButton(true)}
+                            onClick={handleAddRematchPlayer}
+                            disabled={isActionLoading}
+                            title={t("addPlayer")}
+                            aria-label={t("addPlayer")}
+                          >
+                            <UserPlus size={15} />
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
             <div style={styles.gameOverActions}>
               <button
-                style={styles.btnLeave}
+                style={{ ...styles.btnLeave, ...styles.compactRematchButton }}
                 onClick={handleLeaveGame}
                 disabled={isActionLoading}
               >
                 <LogOut size={16} /> {t("leave")}
               </button>
               <button
-                style={styles.btnWin}
+                style={{ ...styles.btnWin, ...styles.compactRematchButton }}
                 onClick={handlePlayAgain}
-                disabled={isActionLoading}
+                disabled={isActionLoading || isRematchReady}
               >
-                <RefreshCw size={16} /> {isActionLoading ? t("starting") : t("playAgain")}
+                <RefreshCw size={16} /> {isRematchReady
+                  ? t("waitingForPlayers")
+                  : isActionLoading ? t("starting")
+                    : isManagedBotRoom ? t("playAgain")
+                      : isPreviousRoundSpectator ? t("play") : t("agreeAndPlay")}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {rematchRemovalNotice && (
+        <div style={styles.gameOverOverlay}>
+          <div style={styles.gameOverPopup}>
+            <h3 style={{ ...styles.gameOverTitle, color: "#ff6b6b" }}>
+              {t("rematchRemovedTitle")}
+            </h3>
+            <p>{rematchRemovalNotice === "no-response"
+              ? t("rematchRemovedNoResponse")
+              : rematchRemovalNotice === "insufficient-balance"
+                ? t("rematchRemovedBalance")
+                : t("rematchLeftMessage")}</p>
+            <button
+              style={styles.btnWin}
+              onClick={() => navigate("/second", { replace: true })}
+            >
+              {t("goToLobby")}
+            </button>
           </div>
         </div>
       )}

@@ -30,7 +30,7 @@ function DepositPage() {
   const navigate = useNavigate();
   const { user, refreshUser } = useUser();
   const { t, ui } = useSettings();
-  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState("");
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState(PAYMENT_METHODS[0]?.id || "");
   const [inputMode, setInputMode] = useState("text");
   const [messageOrLink, setMessageOrLink] = useState("");
   const [screenshotFile, setScreenshotFile] = useState(null);
@@ -176,7 +176,7 @@ function DepositPage() {
       setScreenshotFile(null);
       setScreenshotPreviewUrl("");
       setConfirmPaid(false);
-      setSelectedPaymentMethod("");
+      setSelectedPaymentMethod(PAYMENT_METHODS[0]?.id || "");
     } catch (error) {
       setResult({ type: "error", text: error.message || t("backendFailed") });
     } finally {
@@ -189,7 +189,7 @@ function DepositPage() {
   const styles = {
     page: {
       minHeight: "100dvh",
-      width: "100vw",
+      width: "100%",
       display: "flex",
       justifyContent: "center",
       alignItems: "flex-start",
@@ -208,6 +208,9 @@ function DepositPage() {
       borderRadius: "14px",
       padding: "20px",
       position: "relative",
+      boxSizing: "border-box",
+      minWidth: 0,
+      overflowWrap: "anywhere",
     },
     title: {
       margin: "0 0 10px 0",
@@ -227,6 +230,16 @@ function DepositPage() {
       padding: "12px",
       marginBottom: "14px",
     },
+    depositSteps: {
+      margin: "0 0 16px",
+      padding: "12px 12px 12px 30px",
+      borderRadius: "10px",
+      background: "rgba(255,255,255,0.07)",
+      border: "1px solid rgba(255,255,255,0.16)",
+      color: colors.cream,
+      fontSize: "0.9rem",
+      lineHeight: 1.5,
+    },
     paymentMethodTitle: {
       margin: "0 0 10px 0",
       fontSize: "0.85rem",
@@ -237,13 +250,13 @@ function DepositPage() {
       opacity: 0.92,
     },
     paymentMethodList: {
-      display: "flex",
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fit, minmax(96px, 1fr))",
       gap: "10px",
-      overflowX: "auto",
       paddingBottom: "2px",
     },
     paymentMethodButton: {
-      minWidth: "112px",
+      minWidth: 0,
       borderRadius: "18px",
       border: "1px solid rgba(255,255,255,0.18)",
       background: "rgba(255,255,255,0.08)",
@@ -272,6 +285,7 @@ function DepositPage() {
       background: "#fff",
       padding: "5px",
       boxSizing: "border-box",
+      overflowX: "hidden",
     },
     payNumberList: {
       display: "flex",
@@ -371,9 +385,9 @@ function DepositPage() {
     screenshotHelper: {
       margin: "0 0 8px 0",
       fontSize: "0.82rem",
-      opacity: 0.85,
+      opacity: 1,
       textAlign: "center",
-      color: colors.cream,
+      color: "#000000",
     },
     fileName: {
       marginBottom: "10px",
@@ -408,6 +422,7 @@ function DepositPage() {
       display: "flex",
       gap: "10px",
       justifyContent: "space-between",
+      flexWrap: "wrap",
     },
     button: {
       flex: 1,
@@ -423,7 +438,8 @@ function DepositPage() {
     },
     backButton: {
       ...ui.secondaryButton,
-      color: colors.cream,
+      color: "#000000",
+      fontWeight: 600,
     },
     submitButton: {
       ...goldButton,
@@ -517,8 +533,8 @@ function DepositPage() {
   const isDepositSuccess = result?.type === "success";
 
   return (
-    <div style={styles.page}>
-      <div style={styles.card}>
+    <div className="money-page" style={styles.page}>
+      <div className="money-card" style={styles.card}>
         <h2 style={styles.title}><Wallet size={22} style={{ verticalAlign: "-4px", marginRight: "8px" }} />{t("deposit")}</h2>
 
         {isDepositSuccess ? (
@@ -533,6 +549,11 @@ function DepositPage() {
           </div>
         ) : (
           <>
+            <ol style={styles.depositSteps}>
+              <li>{t("depositStepPay")}</li>
+              <li>{t("depositStepReceipt")}</li>
+              <li>{t("depositStepConfirm")}</li>
+            </ol>
             <div style={styles.paymentMethodCard}>
               <p style={styles.paymentMethodTitle}>{t("selectPaymentMethod")}</p>
               <div style={styles.paymentMethodList}>
@@ -657,7 +678,7 @@ function DepositPage() {
               {t("confirmPayment")}
             </label>
 
-            <div style={styles.actions}>
+            <div className="money-actions" style={styles.actions}>
               <button
                 type="button"
                 style={{ ...styles.button, ...styles.backButton }}
