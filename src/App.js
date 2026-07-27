@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BrowserRouter as Router, Navigate, Routes, Route } from "react-router-dom";
+import { BrowserRouter as Router, Navigate, Routes, Route, useLocation } from "react-router-dom";
 import { UserProvider, useUser } from "./contexts/UserContext";
 import { SettingsProvider, useSettings } from "./contexts/SettingsContext";
 
@@ -10,7 +10,7 @@ import DepositPage from "./DepositPage";
 import WithdrawPage from "./withdrawpage";
 import SplashScreen from "./SplashScreen";
 import CoinAmount from "./CoinAmount";
-import { formatCoins } from "./utils/money";
+import { formatBirr } from "./utils/money";
 
 function getSharedRoomId() {
   const tg = window.Telegram?.WebApp;
@@ -48,12 +48,95 @@ function requestLaunchFullscreen() {
   }
 }
 
+function getAnalyticsSessionId() {
+  const existing = sessionStorage.getItem("karta_analytics_session");
+  if (existing) return existing;
+  const next = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  sessionStorage.setItem("karta_analytics_session", next);
+  return next;
+}
+
+function ExperienceAnalytics() {
+  const location = useLocation();
+  const { user } = useUser();
+  const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000/api";
+  const sessionId = getAnalyticsSessionId();
+  const userId = user?.telegramId || user?.id || null;
+
+  useEffect(() => {
+    const send = (eventName, metadata = {}) => fetch(`${API_BASE_URL}/analytics/event`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ eventName, sessionId, userId, path: location.pathname, metadata }),
+      keepalive: true,
+    }).catch(() => {});
+
+    const sessionKey = `karta_session_started_${sessionId}`;
+    if (!sessionStorage.getItem(sessionKey)) {
+      sessionStorage.setItem(sessionKey, "1");
+      send("session_start", {
+        language: navigator.language,
+        platform: window.Telegram?.WebApp?.platform || "web",
+      });
+    }
+    send(location.pathname.startsWith("/game/") ? "game_view" : "page_view");
+  }, [API_BASE_URL, location.pathname, sessionId, userId]);
+
+  useEffect(() => {
+    const startedAt = Date.now();
+    const heartbeat = () => {
+      if (document.visibilityState !== "visible") return;
+      fetch(`${API_BASE_URL}/analytics/event`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          eventName: "heartbeat",
+          sessionId,
+          userId,
+          path: window.location.pathname,
+          metadata: { elapsedSeconds: Math.round((Date.now() - startedAt) / 1000) },
+        }),
+        keepalive: true,
+      }).catch(() => {});
+    };
+    const timer = setInterval(heartbeat, 60_000);
+    return () => clearInterval(timer);
+  }, [API_BASE_URL, sessionId, userId]);
+
+  useEffect(() => {
+    const reportError = (kind) => {
+      fetch(`${API_BASE_URL}/analytics/event`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          eventName: "app_error",
+          sessionId,
+          userId,
+          path: window.location.pathname,
+          metadata: { kind },
+        }),
+        keepalive: true,
+      }).catch(() => {});
+    };
+    const handleError = () => reportError("window_error");
+    const handleRejection = () => reportError("unhandled_rejection");
+    window.addEventListener("error", handleError);
+    window.addEventListener("unhandledrejection", handleRejection);
+    return () => {
+      window.removeEventListener("error", handleError);
+      window.removeEventListener("unhandledrejection", handleRejection);
+    };
+  }, [API_BASE_URL, sessionId, userId]);
+
+  return null;
+}
+
 function WelcomeGiftPopup() {
   const { user, dismissFirstRunGift } = useUser();
   const { t, ui } = useSettings();
-  const giftCoins = Number(user?.firstRunGiftCoins || 0);
+  const giftBirr = Number(user?.firstRunGiftBirr || 0);
 
-  if (!giftCoins) return null;
+  if (!giftBirr) return null;
 
   const styles = {
     backdrop: {
@@ -139,10 +222,50 @@ function WelcomeGiftPopup() {
           <div aria-hidden="true" style={styles.birrBadge}>Br</div>
         </div>
         <h2 id="welcome-gift-title" style={styles.title}>{t("welcomeGiftTitle")}</h2>
-        <p style={styles.text}>{t("welcomeGiftText", { amount: formatCoins(giftCoins) })}</p>
-        <CoinAmount value={giftCoins} size={22} style={styles.amount} />
+        <p style={styles.text}>{t("welcomeGiftText", { amount: formatBirr(giftBirr) })}</p>
+        <CoinAmount value={giftBirr} size={22} style={styles.amount} />
         <button type="button" style={styles.button} onClick={dismissFirstRunGift}>
           {t("welcomeGiftButton")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ReferralRewardPopup() {
+  const { user, notifications, dismissNotification } = useUser();
+  const { t, ui } = useSettings();
+  const notification = notifications.find((item) => item.type === "referral_reward");
+  if (!notification || Number(user?.firstRunGiftBirr || 0) > 0) return null;
+
+  const amount = Number(notification.data?.amount || 0);
+  const player = notification.data?.referredUserName || t("newPlayer");
+  return (
+    <div
+      style={{
+        position: "fixed", inset: 0, zIndex: 201, display: "flex", alignItems: "center",
+        justifyContent: "center", padding: "18px", background: "rgba(0,0,0,0.64)",
+        backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", boxSizing: "border-box",
+      }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="referral-reward-title"
+    >
+      <div style={{ width: "100%", maxWidth: "320px", ...ui.glassPanel, borderRadius: "12px", padding: "22px", textAlign: "center", color: ui.colors.cream }}>
+        <div aria-hidden="true" style={{ fontSize: "2.5rem", marginBottom: "8px" }}>🎉</div>
+        <h2 id="referral-reward-title" style={{ margin: "0 0 9px", color: ui.colors.gold, fontSize: "1.3rem" }}>
+          {t("referralRewardTitle")}
+        </h2>
+        <p style={{ margin: "0 0 14px", lineHeight: 1.5 }}>
+          {t("referralRewardText", { player, amount: formatBirr(amount) })}
+        </p>
+        <CoinAmount value={amount} size={22} style={{ marginBottom: "18px", color: ui.colors.gold, fontWeight: 900 }} />
+        <button
+          type="button"
+          style={{ width: "100%", ...ui.goldButton, color: ui.colors.textDark, borderRadius: "8px", padding: "11px 14px", fontWeight: 900, cursor: "pointer" }}
+          onClick={() => dismissNotification(notification.id)}
+        >
+          {t("referralRewardButton")}
         </button>
       </div>
     </div>
@@ -168,6 +291,7 @@ function AppShell() {
 
   return (
     <>
+      <ExperienceAnalytics />
       <Routes>
         <Route path="/" element={<LaunchRoute />} />
         <Route path="/deposit" element={<DepositPage />} />
@@ -176,6 +300,7 @@ function AppShell() {
         <Route path="/game/:roomId" element={<GamePage />} />
       </Routes>
       <WelcomeGiftPopup />
+      <ReferralRewardPopup />
     </>
   );
 }

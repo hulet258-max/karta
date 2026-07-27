@@ -1,8 +1,8 @@
-import { render, screen } from '@testing-library/react';
-import App from './App';
+import { render, screen } from "@testing-library/react";
+import CoinAmount from "./CoinAmount";
 
-test('renders learn react link', () => {
-  render(<App />);
-  const linkElement = screen.getByText(/learn react/i);
-  expect(linkElement).toBeInTheDocument();
+test("renders Birr balance amounts in the player UI format", () => {
+  render(<CoinAmount value={12.5} />);
+
+  expect(screen.getByText("12.5 Birr")).toBeInTheDocument();
 });

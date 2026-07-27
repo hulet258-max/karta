@@ -40,6 +40,7 @@ export const UserProvider = ({ children }) => {
   const [telegramUser, setTelegramUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [notifications, setNotifications] = useState([]);
 
   const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000/api";
 
@@ -47,7 +48,13 @@ export const UserProvider = ({ children }) => {
     const res = await fetch(`${API_BASE_URL}/telegram-user`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ telegramId: id }),
+      body: JSON.stringify({
+        telegramId: id,
+        username: tgUser?.username || "",
+        firstName: tgUser?.first_name || "",
+        lastName: tgUser?.last_name || "",
+        photoUrl: tgUser?.photo_url || fallbackPhoto || "",
+      }),
     });
 
     if (!res.ok) {
@@ -63,10 +70,23 @@ export const UserProvider = ({ children }) => {
       id: String(id),
       telegramId: String(id),
       ...data.user,
-      photo: tgUser?.photo_url || fallbackPhoto || null,
+      photo: tgUser?.photo_url || data.user?.photoUrl || fallbackPhoto || null,
     };
 
     setUser(nextUser);
+    try {
+      const notificationResponse = await fetch(`${API_BASE_URL}/notifications`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: id }),
+      });
+      const notificationData = await notificationResponse.json();
+      if (notificationResponse.ok && notificationData.success) {
+        setNotifications(notificationData.notifications || []);
+      }
+    } catch (notificationError) {
+      console.warn("Could not load notifications:", notificationError);
+    }
     return nextUser;
   }, [API_BASE_URL]);
 
@@ -168,13 +188,40 @@ export const UserProvider = ({ children }) => {
     return loadBackendUser(String(id), telegramUser, user?.photo);
   }, [loadBackendUser, telegramId, telegramUser, user?.telegramId, user?.id, user?.photo]);
 
-  const dismissFirstRunGift = useCallback(() => {
+  const dismissFirstRunGift = useCallback(async () => {
+    const id = telegramId || user?.telegramId || user?.id;
     setUser((currentUser) => currentUser ? {
       ...currentUser,
       isFirstRun: false,
-      firstRunGiftCoins: 0,
+      firstRunGiftBirr: 0,
+      welcomeGiftSeen: true,
     } : currentUser);
-  }, []);
+    if (!id) return;
+    try {
+      await fetch(`${API_BASE_URL}/welcome-gift/ack`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: id }),
+      });
+    } catch (ackError) {
+      console.warn("Could not acknowledge welcome gift:", ackError);
+    }
+  }, [API_BASE_URL, telegramId, user?.telegramId, user?.id]);
+
+  const dismissNotification = useCallback(async (notificationId) => {
+    const id = telegramId || user?.telegramId || user?.id;
+    setNotifications((current) => current.filter((item) => Number(item.id) !== Number(notificationId)));
+    if (!id || !notificationId) return;
+    try {
+      await fetch(`${API_BASE_URL}/notifications/read`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: id, notificationId }),
+      });
+    } catch (ackError) {
+      console.warn("Could not acknowledge notification:", ackError);
+    }
+  }, [API_BASE_URL, telegramId, user?.telegramId, user?.id]);
 
   useEffect(() => {
     const handleBalanceUpdate = ({ userId, balance, user: updatedUser }) => {
@@ -192,9 +239,17 @@ export const UserProvider = ({ children }) => {
     };
 
     socket.on("balance_update", handleBalanceUpdate);
+    const handleNotification = (notification) => {
+      if (!notification?.id) return;
+      setNotifications((current) => current.some((item) => Number(item.id) === Number(notification.id))
+        ? current
+        : [...current, notification]);
+    };
+    socket.on("user_notification", handleNotification);
 
     return () => {
       socket.off("balance_update", handleBalanceUpdate);
+      socket.off("user_notification", handleNotification);
     };
   }, [telegramId, telegramUser?.photo_url, user?.telegramId, user?.id]);
 
@@ -204,6 +259,8 @@ export const UserProvider = ({ children }) => {
     telegramUser,
     refreshUser,
     dismissFirstRunGift,
+    notifications,
+    dismissNotification,
     loading,
     error,
   };

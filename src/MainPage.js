@@ -9,6 +9,9 @@ import CoinAmount from "./CoinAmount";
 import ShareToast from "./ShareToast";
 import TinySpinner from "./TinySpinner";
 import { sharePreparedTelegramMessage, switchTelegramInlineQuery } from "./utils/telegramShare";
+import { getDisplayName } from "./utils/displayName";
+
+const DEFAULT_PROFILE_PHOTO = "https://cdn-icons-png.flaticon.com/512/149/149071.png";
 
 function MainPage() {
   const navigate = useNavigate();
@@ -22,7 +25,7 @@ function MainPage() {
   const [profileError, setProfileError] = useState("");
   const [shareLoading, setShareLoading] = useState(false);
   const [shareToast, setShareToast] = useState(null);
-  const profileButtonName = (user?.username ? `@${user.username}` : "") || user?.displayName || user?.firstName || t("user");
+  const profileButtonName = getDisplayName(user, t("user"));
   const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000/api";
 
   useEffect(() => {
@@ -361,6 +364,16 @@ function MainPage() {
       gap: "8px",
       marginTop: "12px",
     },
+    profileAvatar: {
+      width: "72px",
+      height: "72px",
+      display: "block",
+      margin: "4px auto 2px",
+      borderRadius: "50%",
+      objectFit: "cover",
+      border: `3px solid ${colors.gold}`,
+      boxShadow: "0 10px 24px rgba(0,0,0,0.4), 0 0 20px rgba(241,196,15,0.22)",
+    },
     profileStat: {
       ...ui.field,
       borderRadius: "8px",
@@ -697,9 +710,13 @@ function MainPage() {
       <div style={styles.topBar}>
         <button style={styles.profileIconButton} aria-label={t("profileView")} onClick={openProfile}>
           <img
-            src={user?.photo || "https://cdn-icons-png.flaticon.com/512/149/149071.png"}
+            src={user?.photo || user?.photoUrl || DEFAULT_PROFILE_PHOTO}
             alt={t("profileView")}
             style={{ width: 24, height: 24, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }}
+            onError={(event) => {
+              event.currentTarget.onerror = null;
+              event.currentTarget.src = DEFAULT_PROFILE_PHOTO;
+            }}
           />
           <span style={styles.profileButtonName}>{profileButtonName}</span>
         </button>
@@ -724,7 +741,7 @@ function MainPage() {
           >
             <div style={styles.settingsHeader}>
               <h2 id="profile-title" style={styles.settingsTitle}>
-                {(profile?.user?.username ? `@${profile.user.username}` : "") || profile?.user?.displayName || profile?.user?.firstName || t("user")}
+                {getDisplayName(profile?.user, t("user"))}
               </h2>
               <button
                 type="button"
@@ -735,6 +752,16 @@ function MainPage() {
                 <X size={17} />
               </button>
             </div>
+
+            <img
+              src={profile?.user?.photoUrl || user?.photo || user?.photoUrl || DEFAULT_PROFILE_PHOTO}
+              alt={getDisplayName(profile?.user || user, t("user"))}
+              style={styles.profileAvatar}
+              onError={(event) => {
+                event.currentTarget.onerror = null;
+                event.currentTarget.src = DEFAULT_PROFILE_PHOTO;
+              }}
+            />
 
             <input
               value={profileName}
@@ -762,8 +789,8 @@ function MainPage() {
                 <span style={styles.profileStatValue}>{profile?.referralStats?.shareCount || 0}</span>
               </div>
               <div style={styles.profileStat}>
-                <span style={styles.profileStatLabel}>{t("gotCoins")}</span>
-                <span style={styles.profileStatValue}><CoinAmount value={profile?.referralStats?.earnedCoins ?? profile?.referralStats?.earnedBirr} /></span>
+                <span style={styles.profileStatLabel}>{t("gotBirr")}</span>
+                <span style={styles.profileStatValue}><CoinAmount value={profile?.referralStats?.earnedBirr} /></span>
               </div>
               <div style={styles.profileStat}>
                 <span style={styles.profileStatLabel}>{t("rewardsLeft")}</span>

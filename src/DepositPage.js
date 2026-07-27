@@ -1,18 +1,36 @@
 import React, { useEffect, useState } from "react";
-import { ImagePlus, Wallet } from "lucide-react";
+import { CheckCircle2, Home, ImagePlus, Wallet } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useSettings } from "./contexts/SettingsContext";
 import { useUser } from "./contexts/UserContext";
 import { socket } from "./socket";
-import CoinAmount from "./CoinAmount";
-import { MIN_DEPOSIT_BIRR, MIN_DEPOSIT_COINS, coinsToBirr, formatBirrValue } from "./utils/money";
+import { formatBirrValue } from "./utils/money";
 
 const FALLBACK_PAY_NUMBERS = [{ id: "fallback", phoneNumber: "+251-900-000-000" }];
+const PAYMENT_METHOD_IMAGES = ["/payment1-telebirr.png"];
+
+const getPaymentMethodName = (imagePath) => {
+  const fileName = String(imagePath || "").split("/").pop() || "";
+  const withoutExtension = fileName.replace(/\.[^.]+$/, "");
+  const methodSlug = withoutExtension.replace(/^payment\d+-?/i, "") || withoutExtension;
+  return methodSlug
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+};
+
+const PAYMENT_METHODS = PAYMENT_METHOD_IMAGES.map((image) => ({
+  id: image.replace(/^\//, "").replace(/\.[^.]+$/, ""),
+  name: getPaymentMethodName(image),
+  image,
+}));
 
 function DepositPage() {
   const navigate = useNavigate();
   const { user, refreshUser } = useUser();
   const { t, ui } = useSettings();
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState(PAYMENT_METHODS[0]?.id || "");
   const [inputMode, setInputMode] = useState("text");
   const [messageOrLink, setMessageOrLink] = useState("");
   const [screenshotFile, setScreenshotFile] = useState(null);
@@ -115,6 +133,11 @@ function DepositPage() {
       return;
     }
 
+    if (!selectedPaymentMethod) {
+      setResult({ type: "error", text: t("paymentMethodRequired") });
+      return;
+    }
+
     if (inputMode === "text" && !messageOrLink.trim()) {
       setResult({ type: "error", text: t("pasteReceiptError") });
       return;
@@ -137,15 +160,14 @@ function DepositPage() {
       }
 
       const data = await submitReceiptCheck(receiptInput);
-      const roundedDownBirr = Number(data.roundedDownBirr || 0);
+      const creditedBirr = Number(data.creditedBirr ?? data.creditedAmount ?? 0);
 
       setResult({
         type: "success",
-        text: data.creditedCoins !== undefined
-          ? t(roundedDownBirr > 0 ? "depositCoinsCreditedRounded" : "depositCoinsCredited", {
-              amount: formatBirrValue(data.creditedBirrValue || coinsToBirr(data.creditedCoins)),
+        text: creditedBirr > 0
+          ? t("depositBirrCredited", {
+              amount: formatBirrValue(creditedBirr),
               birr: formatBirrValue(data.paidBirr),
-              rounded: formatBirrValue(roundedDownBirr),
             })
           : data.message || t("receiptComplete", { status: data.receiptStatus }),
       });
@@ -154,6 +176,7 @@ function DepositPage() {
       setScreenshotFile(null);
       setScreenshotPreviewUrl("");
       setConfirmPaid(false);
+      setSelectedPaymentMethod(PAYMENT_METHODS[0]?.id || "");
     } catch (error) {
       setResult({ type: "error", text: error.message || t("backendFailed") });
     } finally {
@@ -166,7 +189,7 @@ function DepositPage() {
   const styles = {
     page: {
       minHeight: "100dvh",
-      width: "100vw",
+      width: "100%",
       display: "flex",
       justifyContent: "center",
       alignItems: "flex-start",
@@ -185,6 +208,9 @@ function DepositPage() {
       borderRadius: "14px",
       padding: "20px",
       position: "relative",
+      boxSizing: "border-box",
+      minWidth: 0,
+      overflowWrap: "anywhere",
     },
     title: {
       margin: "0 0 10px 0",
@@ -197,6 +223,69 @@ function DepositPage() {
       opacity: 0.92,
       color: colors.cream,
       lineHeight: 1.5,
+    },
+    paymentMethodCard: {
+      ...glassField,
+      borderRadius: "12px",
+      padding: "12px",
+      marginBottom: "14px",
+    },
+    depositSteps: {
+      margin: "0 0 16px",
+      padding: "12px 12px 12px 30px",
+      borderRadius: "10px",
+      background: "rgba(255,255,255,0.07)",
+      border: "1px solid rgba(255,255,255,0.16)",
+      color: colors.cream,
+      fontSize: "0.9rem",
+      lineHeight: 1.5,
+    },
+    paymentMethodTitle: {
+      margin: "0 0 10px 0",
+      fontSize: "0.85rem",
+      fontWeight: 800,
+      letterSpacing: "0.8px",
+      textTransform: "uppercase",
+      color: colors.cream,
+      opacity: 0.92,
+    },
+    paymentMethodList: {
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fit, minmax(96px, 1fr))",
+      gap: "10px",
+      paddingBottom: "2px",
+    },
+    paymentMethodButton: {
+      minWidth: 0,
+      borderRadius: "18px",
+      border: "1px solid rgba(255,255,255,0.18)",
+      background: "rgba(255,255,255,0.08)",
+      color: colors.cream,
+      padding: "10px",
+      cursor: "pointer",
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: "7px",
+      fontWeight: 800,
+      boxShadow: "inset 0 1px 0 rgba(255,255,255,0.18)",
+    },
+    paymentMethodButtonActive: {
+      borderColor: colors.gold,
+      background: "rgba(241,196,15,0.2)",
+      color: colors.gold,
+      boxShadow: "0 0 0 2px rgba(241,196,15,0.2), inset 0 1px 0 rgba(255,255,255,0.28)",
+    },
+    paymentLogo: {
+      width: "44px",
+      height: "44px",
+      objectFit: "contain",
+      borderRadius: "12px",
+      background: "#fff",
+      padding: "5px",
+      boxSizing: "border-box",
+      overflowX: "hidden",
     },
     payNumberList: {
       display: "flex",
@@ -235,7 +324,7 @@ function DepositPage() {
       gap: "6px",
       ...glassField,
       borderRadius: "8px",
-      color: colors.cream,
+      color: colors.gold,
       padding: "9px 10px",
       fontWeight: 600,
       cursor: "pointer",
@@ -249,8 +338,10 @@ function DepositPage() {
       minHeight: "110px",
       resize: "vertical",
       borderRadius: "10px",
-      ...ui.textField,
-      color: colors.text,
+      background: "#ffffff",
+      border: "1px solid rgba(255,255,255,0.85)",
+      boxShadow: "0 8px 18px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.8)",
+      color: colors.textDark,
       padding: "12px",
       boxSizing: "border-box",
       outline: "none",
@@ -284,7 +375,7 @@ function DepositPage() {
       width: "100%",
       ...ui.secondaryButton,
       borderRadius: "10px",
-      color: colors.cream,
+      color: colors.gold,
       fontWeight: 700,
       fontSize: "0.92rem",
       cursor: "pointer",
@@ -294,9 +385,9 @@ function DepositPage() {
     screenshotHelper: {
       margin: "0 0 8px 0",
       fontSize: "0.82rem",
-      opacity: 0.85,
+      opacity: 1,
       textAlign: "center",
-      color: colors.cream,
+      color: "#000000",
     },
     fileName: {
       marginBottom: "10px",
@@ -331,6 +422,7 @@ function DepositPage() {
       display: "flex",
       gap: "10px",
       justifyContent: "space-between",
+      flexWrap: "wrap",
     },
     button: {
       flex: 1,
@@ -346,7 +438,8 @@ function DepositPage() {
     },
     backButton: {
       ...ui.secondaryButton,
-      color: colors.cream,
+      color: "#000000",
+      fontWeight: 600,
     },
     submitButton: {
       ...goldButton,
@@ -397,26 +490,111 @@ function DepositPage() {
       color: colors.cream,
       letterSpacing: "0.3px",
     },
+    successView: {
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      textAlign: "center",
+      gap: "14px",
+      padding: "24px 6px 6px",
+    },
+    successIcon: {
+      color: "#7CFF8A",
+      filter: "drop-shadow(0 8px 24px rgba(124,255,138,0.32))",
+    },
+    successTitle: {
+      margin: 0,
+      color: colors.gold,
+      fontSize: "1.25rem",
+    },
+    successText: {
+      margin: 0,
+      color: colors.cream,
+      lineHeight: 1.45,
+      fontSize: "0.95rem",
+    },
+    homeButton: {
+      width: "100%",
+      ...goldButton,
+      color: colors.textDark,
+      border: "none",
+      borderRadius: "12px",
+      padding: "12px 14px",
+      fontWeight: 900,
+      cursor: "pointer",
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: "8px",
+    },
   };
 
+  const selectedPayment = PAYMENT_METHODS.find((method) => method.id === selectedPaymentMethod);
+  const isDepositSuccess = result?.type === "success";
+
   return (
-    <div style={styles.page}>
-      <div style={styles.card}>
+    <div className="money-page" style={styles.page}>
+      <div className="money-card" style={styles.card}>
         <h2 style={styles.title}><Wallet size={22} style={{ verticalAlign: "-4px", marginRight: "8px" }} />{t("deposit")}</h2>
-        <p style={styles.text}>
-          {t("depositCoinRule", {
-            birr: formatBirrValue(MIN_DEPOSIT_BIRR),
-          })}{" "}
-          <CoinAmount value={MIN_DEPOSIT_COINS} size={17} />
-        </p>
-        <p style={styles.text}>{payNumbers.length > 1 ? t("payToNumbers") : t("payToNumber")}</p>
-        <div style={styles.payNumberList}>
-          {payNumbers.map((number) => (
-            <div style={styles.payNumberItem} key={number.id || number.phoneNumber}>
-              {number.phoneNumber}
+
+        {isDepositSuccess ? (
+          <div style={styles.successView}>
+            <CheckCircle2 size={86} strokeWidth={2.4} style={styles.successIcon} />
+            <h3 style={styles.successTitle}>{t("depositSuccessTitle")}</h3>
+            <p style={styles.successText}>{result.text}</p>
+            <button type="button" style={styles.homeButton} onClick={() => navigate("/")}>
+              <Home size={18} />
+              {t("goHome")}
+            </button>
+          </div>
+        ) : (
+          <>
+            <ol style={styles.depositSteps}>
+              <li>{t("depositStepPay")}</li>
+              <li>{t("depositStepReceipt")}</li>
+              <li>{t("depositStepConfirm")}</li>
+            </ol>
+            <div style={styles.paymentMethodCard}>
+              <p style={styles.paymentMethodTitle}>{t("selectPaymentMethod")}</p>
+              <div style={styles.paymentMethodList}>
+                {PAYMENT_METHODS.map((method) => (
+                  <button
+                    key={method.id}
+                    type="button"
+                    style={{
+                      ...styles.paymentMethodButton,
+                      ...(selectedPaymentMethod === method.id ? styles.paymentMethodButtonActive : {}),
+                    }}
+                    onClick={() => setSelectedPaymentMethod(method.id)}
+                    aria-pressed={selectedPaymentMethod === method.id}
+                    disabled={submitting}
+                  >
+                    <img
+                      src={method.image}
+                      alt={method.name}
+                      style={styles.paymentLogo}
+                      onError={(event) => {
+                        event.currentTarget.style.display = "none";
+                      }}
+                    />
+                    <span>{method.name}</span>
+                  </button>
+                ))}
+              </div>
             </div>
-          ))}
-        </div>
+
+            {selectedPayment && (
+              <>
+                <p style={styles.text}>{t("payAmountWithFollowingNumber", { method: selectedPayment.name })}</p>
+                <div style={styles.payNumberList}>
+                  {payNumbers.map((number) => (
+                    <div style={styles.payNumberItem} key={number.id || number.phoneNumber}>
+                      {number.phoneNumber}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
 
         <form onSubmit={handleSubmit}>
           <fieldset style={styles.formFieldset} disabled={submitting}>
@@ -500,7 +678,7 @@ function DepositPage() {
               {t("confirmPayment")}
             </label>
 
-            <div style={styles.actions}>
+            <div className="money-actions" style={styles.actions}>
               <button
                 type="button"
                 style={{ ...styles.button, ...styles.backButton }}
@@ -529,6 +707,8 @@ function DepositPage() {
           >
             {result.text}
           </div>
+        )}
+          </>
         )}
         {submitting && (
           <div style={styles.loadingOverlay}>

@@ -1,6 +1,6 @@
 import React from "react";
 import { WalletCards } from "lucide-react";
-import { formatCoins } from "./utils/money";
+import { formatBirr } from "./utils/money";
 
 function CoinAmount({ value, size = 16, style = {}, textStyle = {} }) {
   return (
@@ -36,7 +36,7 @@ function CoinAmount({ value, size = 16, style = {}, textStyle = {} }) {
       >
         <WalletCards size={Math.max(10, Math.round(size * 0.68))} strokeWidth={2.4} />
       </span>
-      <span style={textStyle}>{formatCoins(value)}</span>
+      <span style={textStyle}>{formatBirr(value)}</span>
     </span>
   );
 }

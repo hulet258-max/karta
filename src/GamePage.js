@@ -1,42 +1,49 @@
 // src/GamePage.js
 import React, { useCallback, useState, useEffect, useMemo, useRef } from "react";
-import { Hand, HelpCircle, History, X } from "lucide-react";
+import { CircleAlert, DollarSign, Hand, HelpCircle, LogOut, Pause, PhoneCall, Play, RefreshCw, Trophy, UserPlus, X } from "lucide-react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useSettings } from "./contexts/SettingsContext";
 import { useUser } from "./contexts/UserContext";
 import { socket } from "./socket";
 import { formatBirr } from "./utils/money";
 import CoinAmount from "./CoinAmount";
+import { getDisplayName } from "./utils/displayName";
+import { playGameSound } from "./audioManager";
+import {
+  findAddedCard,
+  optimisticallyLayCard,
+  optimisticallyPickLaidCard,
+  serverStateConfirmsAction,
+} from "./optimisticGameState";
 
 const rankOrder = ["A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2"];
 const PAGE_TOP_PADDING = "80px";
+const DEFAULT_PROFILE_PHOTO = "https://cdn-icons-png.flaticon.com/512/149/149071.png";
+const DEBUG_GAME_EVENTS = process.env.REACT_APP_DEBUG_GAME_EVENTS === "true";
+const TURN_INACTIVITY_TIMEOUT_MS = 5 * 60 * 1000;
 const suitOrder = ["♠", "♥", "♦", "♣"];
-
-const roundMoney = (value) => {
-  const amount = Number(value || 0);
-  return Number.isFinite(amount) ? Math.round(amount) : 0;
-};
-
-const getCommissionRate = (entryFee, gamesPlayed = 0) => {
-  const fee = Number(entryFee || 0);
-  if (fee <= 0) return 0;
-  let rate = 0.02;
-  if (fee >= 250) rate = 0.12;
-  else if (fee >= 100) rate = 0.1;
-  else if (fee >= 50) rate = 0.08;
-  else if (fee >= 25) rate = 0.06;
-  else if (fee >= 10) rate = 0.04;
-  return Math.min(rate + Math.max(Number(gamesPlayed || 0), 0) * 0.01, 0.25);
-};
-
-const calculateCommissionAmount = (totalPot, entryFee, gamesPlayed = 0) => {
-  const pot = roundMoney(totalPot);
-  if (pot <= 0) return 0;
-  return Math.min(pot, Math.max(1, Math.ceil(pot * getCommissionRate(entryFee, gamesPlayed))));
-};
 
 const isJoker = (card) => String(card?.rank || "").toUpperCase() === "JOKER";
 const isBotPlayer = (playerId) => String(playerId || "").startsWith("botgamer:");
+const getArrangedCardGroups = (cards = []) => {
+  const groups = Object.values(cards.reduce((acc, card, originalIndex) => {
+    const key = isJoker(card) ? "JOKER" : String(card?.rank || "?");
+    acc[key] = acc[key] || { rank: key, cards: [] };
+    acc[key].cards.push({ ...card, originalIndex });
+    return acc;
+  }, {}));
+
+  return groups
+    .sort((a, b) => {
+      if (a.rank === "JOKER" || b.rank === "JOKER") return a.rank === "JOKER" ? 1 : -1;
+      if (a.cards.length !== b.cards.length) return b.cards.length - a.cards.length;
+      return rankOrder.indexOf(a.rank) - rankOrder.indexOf(b.rank);
+    })
+    .map((group) => ({
+      ...group,
+      cards: group.cards.sort((a, b) => suitOrder.indexOf(a.suit) - suitOrder.indexOf(b.suit)),
+    }));
+};
 const getJokerIconSrc = (card) => {
   if (!isJoker(card)) return "";
   const cardColor = String(card?.color || "").toLowerCase();
@@ -115,25 +122,26 @@ function GamePage() {
   const [highlightedCardKey, setHighlightedCardKey] = useState(null);
   const prevMyCardsRef = useRef([]);
   const prevGameStatusRef = useRef(location.state?.redisData?.status || null);
-  const prevGameEndedRef = useRef(Boolean(location.state?.redisData?.gameEnded || location.state?.redisData?.status === "ended"));
   const prevTurnRef = useRef(location.state?.redisData?.turn || null);
   const prevWaitingRef = useRef(false);
   const prevLedgerKeyRef = useRef("");
-  const audioRefs = useRef({});
   const [flyingCard, setFlyingCard] = useState(null);
   const [isDealing, setIsDealing] = useState(false);
-  const [isWinning, setIsWinning] = useState(false);
   
   // ✨ UI feedback states
-  const [errorMsg, setErrorMsg] = useState("");
+  const [gameNotification, setGameNotification] = useState(null);
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+  const [dismissedTimeoutKey, setDismissedTimeoutKey] = useState("");
   const [showProgress, setShowProgress] = useState(false);
   const [practiceHelpDismissed, setPracticeHelpDismissed] = useState(false);
   const [leaveSummary, setLeaveSummary] = useState(null);
   const [playerProfiles, setPlayerProfiles] = useState({});
   const [insufficientBalancePopup, setInsufficientBalancePopup] = useState(null);
+  const [rematchRemovalNotice, setRematchRemovalNotice] = useState(null);
+  const [rematchFeeDraft, setRematchFeeDraft] = useState("");
   const [pickedCardDecision, setPickedCardDecision] = useState(null);
+  const [pendingGameplayAction, setPendingGameplayAction] = useState(null);
   const [opponentPickIndicator, setOpponentPickIndicator] = useState(null);
   const [showGameRules, setShowGameRules] = useState(false);
   const [callCooldownUntil, setCallCooldownUntil] = useState(0);
@@ -142,6 +150,50 @@ function GamePage() {
   const lastCallNonceRef = useRef(null);
   const laidHistoryRef = useRef(null);
   const isLeavingRef = useRef(false);
+  const notificationTimerRef = useRef(null);
+  const pendingGameplayActionRef = useRef(null);
+
+  const revealPickedCard = useCallback((card) => {
+    if (!card) return;
+    setPickedCardDecision({ card, revealed: false });
+    requestAnimationFrame(() => {
+      setPickedCardDecision((current) => current ? { ...current, revealed: true } : current);
+    });
+  }, []);
+
+  const settleGameplayTransaction = useCallback((transaction, authoritativeState, pickedCard = null) => {
+    if (!transaction || transaction.settled) return;
+    transaction.settled = true;
+
+    if (authoritativeState) setGameState(authoritativeState);
+    if (pendingGameplayActionRef.current === transaction) {
+      pendingGameplayActionRef.current = null;
+      setPendingGameplayAction(null);
+    }
+
+    if (transaction.kind === "deck-pick") {
+      const userId = String(transaction.userId);
+      const confirmedCard = pickedCard || findAddedCard(
+        transaction.snapshot?.playerCards?.[userId] || [],
+        authoritativeState?.playerCards?.[userId] || []
+      );
+      revealPickedCard(confirmedCard);
+    }
+  }, [revealPickedCard]);
+
+  const cancelGameplayTransaction = useCallback((transaction, restoredState = null) => {
+    if (!transaction || transaction.settled) return;
+    transaction.settled = true;
+    setGameState(restoredState || transaction.snapshot);
+
+    if (pendingGameplayActionRef.current === transaction) {
+      pendingGameplayActionRef.current = null;
+      setPendingGameplayAction(null);
+    }
+    if (transaction.decisionCard) {
+      setPickedCardDecision({ card: transaction.decisionCard, revealed: true });
+    }
+  }, []);
 
   useEffect(() => {
     if (room || !routeRoomId || !user?.telegramId) return;
@@ -168,6 +220,7 @@ function GamePage() {
             roomId: routeRoomId,
             userId: user.telegramId,
             socketId: socket.id,
+            resume: true,
           }),
         });
         const data = await response.json();
@@ -205,11 +258,18 @@ function GamePage() {
           roomId: activeRoomId,
           userId: user.telegramId,
           socketId: socket.id,
+          resume: true,
         }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.success) {
-        if (response.status === 404) navigate("/second", { replace: true });
+        if (
+          response.status === 404 ||
+          data.code === "ROOM_NOT_JOINABLE" ||
+          data.code === "ROOM_MEMBERSHIP_ENDED"
+        ) {
+          navigate("/second", { replace: true });
+        }
         return;
       }
 
@@ -249,17 +309,31 @@ function GamePage() {
 
   useEffect(() => {
     const handleRoomUpdate = (data) => {
-      console.log("📢 Received room_update:", data);
+      if (DEBUG_GAME_EVENTS) {
+        console.log("Received room_update:", data);
+      }
       setRoom(data.room);
       setPlayers(data.players);
-      setGameState(data.redisData);
+
+      const pending = pendingGameplayActionRef.current;
+      if (!pending) {
+        setGameState(data.redisData);
+      } else if (serverStateConfirmsAction(pending, data.redisData, pending.userId)) {
+        settleGameplayTransaction(pending, data.redisData);
+      } else if (
+        data.redisData?.gameEnded ||
+        data.redisData?.paused ||
+        data.redisData?.status !== "playing"
+      ) {
+        cancelGameplayTransaction(pending, data.redisData);
+      }
     };
     socket.on("room_update", handleRoomUpdate);
 
     return () => {
       socket.off("room_update", handleRoomUpdate);
     };
-  }, []); 
+  }, [cancelGameplayTransaction, settleGameplayTransaction]);
 
   useEffect(() => {
     if (!room) return undefined;
@@ -278,6 +352,39 @@ function GamePage() {
     };
   }, [navigate, room]);
 
+  useEffect(() => {
+    if (!room || !user?.telegramId) return undefined;
+    const activeRoomId = String(room.id || room.roomId || room.name);
+    const handleRematchRemoved = (data = {}) => {
+      if (
+        String(data.roomId) === activeRoomId &&
+        String(data.userId) === String(user.telegramId)
+      ) {
+        setRematchRemovalNotice(data.reason || "no-response");
+      }
+    };
+    socket.on("rematch_removed", handleRematchRemoved);
+    return () => socket.off("rematch_removed", handleRematchRemoved);
+  }, [room, user?.telegramId]);
+
+  useEffect(() => {
+    if (!room || !user?.telegramId) return undefined;
+    const activeRoomId = String(room.id || room.roomId || room.name);
+    const handleReturnedToLobby = (data = {}) => {
+      if (
+        String(data.roomId) === activeRoomId &&
+        String(data.userId) === String(user.telegramId)
+      ) {
+        navigate("/second", {
+          replace: true,
+          state: { rematchNotice: "not-all-players-agreed" },
+        });
+      }
+    };
+    socket.on("rematch_returned_to_lobby", handleReturnedToLobby);
+    return () => socket.off("rematch_returned_to_lobby", handleReturnedToLobby);
+  }, [navigate, room, user?.telegramId]);
+
   // Extract game state from the state variable
   const playerCards = useMemo(() => gameState.playerCards || {}, [gameState.playerCards]);
   const laidCards = useMemo(() => gameState.laidCards || [], [gameState.laidCards]);
@@ -287,6 +394,7 @@ function GamePage() {
   const gamePaused = Boolean(gameState.paused || gameState.leaveVote?.active);
   const isRoomCreator = Boolean(user && room && String(room.creatorId) === String(user.telegramId));
   const roomStats = gameState.roomStats || room?.roomStats || {};
+  const isManagedBotRoom = Boolean(gameState.managedBotRoom || roomStats.managedBotRoom);
   const isPracticeGame = Boolean(gameState.practice || roomStats.practice);
   const botProfile = roomStats.botProfile || gameState.botProfile || room?.roomStats?.botProfile || null;
   const gameHistory = roomStats.games || [];
@@ -302,19 +410,29 @@ function GamePage() {
     roomStats.finalizedAt || "",
   ].join(":");
   const myUserId = user?.telegramId ? String(user.telegramId) : "";
-  const storedCommissionAmount = Number(roomStats.commissionAmount || 0);
-  const currentRoundCommission = roomStats.feeEscrowed && currentRoundPot > 0
-    ? calculateCommissionAmount(currentRoundPot, roomStats.entryFee || room?.entryFee, Number(roomStats.gamesPlayed || 0) + 1)
+  const rematch = gameState.rematch?.active ? gameState.rematch : null;
+  const rematchReadyIds = new Set((rematch?.readyPlayerIds || []).map(String));
+  const isRematchReady = Boolean(myUserId && rematchReadyIds.has(myUserId));
+  const rematchDeadline = new Date(rematch?.deadlineAt || "").getTime();
+  const rematchSecondsRemaining = Number.isFinite(rematchDeadline)
+    ? Math.max(0, Math.ceil((rematchDeadline - nowTick) / 1000))
     : 0;
-  const projectedCommission = Math.round(
-    (roomStats.escrowSettled || roomStats.finalizedAt)
-      ? storedCommissionAmount
-      : storedCommissionAmount + currentRoundCommission
+  const isPreviousRoundSpectator = Boolean(gameState.previousRoundSpectator);
+  const proposedRematchFee = Number(rematch?.proposedEntryFee || room?.entryFee || 0);
+  const didCurrentUserWin = Boolean(gameResult?.winnerId && String(gameResult.winnerId) === myUserId);
+  const revealedHands = gameResult?.revealedHands || (gameEnded ? playerCards : {});
+  const winnerCards = revealedHands?.[String(gameResult?.winnerId)] || [];
+  const lastSettlement = roomStats.lastSettlement || null;
+  const lastCompletedGame = gameHistory.length
+    ? gameHistory[gameHistory.length - 1]
+    : null;
+  const settledRoundPayout = Number(
+    gameResult?.roundPayout
+    ?? lastSettlement?.winnerPayout
+    ?? lastCompletedGame?.roundPayout
+    ?? 0
   );
   const myFeesPaid = Number(roomStats.playerFeesPaid?.[myUserId] || 0);
-  const myProjectedWin = Number(
-    roomStats.payouts?.[myUserId] || 0
-  );
   const completedGamesForYou = gameHistory.filter((game) => (
     (game.players || []).some((playerId) => String(playerId) === myUserId)
   ));
@@ -325,6 +443,27 @@ function GamePage() {
     (roomStats.currentRoundPlayers || []).some((playerId) => String(playerId) === myUserId)
       ? Number(roomStats.entryFee || room?.entryFee || 0)
       : 0;
+  const currentRoundLeavePenalty = currentRoundFeeAtRisk / 2;
+  const lastLayTargetsCurrentTurn = gameState.lastLay?.targetPlayerId &&
+    String(gameState.lastLay.targetPlayerId) === String(turn || "");
+  const turnActivityAt = gameState.turnActivityAt ||
+    (lastLayTargetsCurrentTurn ? gameState.lastLay?.at : null) ||
+    gameState.lastActivityAt;
+  const turnActivityTime = Date.parse(turnActivityAt || "");
+  const timedOutOpponentId = String(turn || "") !== myUserId ? String(turn || "") : "";
+  const opponentTurnTimedOut = Boolean(
+    !isPracticeGame &&
+    gameState.status === "playing" &&
+    !gameEnded &&
+    !gamePaused &&
+    currentRoundFeeAtRisk > 0 &&
+    timedOutOpponentId &&
+    Number.isFinite(turnActivityTime) &&
+    nowTick - turnActivityTime >= TURN_INACTIVITY_TIMEOUT_MS
+  );
+  const opponentTimeoutKey = opponentTurnTimedOut
+    ? `${timedOutOpponentId}:${turnActivityAt}`
+    : "";
   const getPlayerName = useCallback((playerId) => {
     const normalizedId = String(playerId || "");
     if (String(user?.telegramId || "") === normalizedId) {
@@ -335,8 +474,16 @@ function GamePage() {
     }
 
     const profile = playerProfiles[normalizedId] || {};
-    return (profile.username ? `@${profile.username}` : "") || profile.displayName || profile.firstName || t("player");
+    return getDisplayName(profile, t("player"));
   }, [botProfile?.displayName, playerProfiles, t, user?.telegramId]);
+  const getPlayerPhoto = useCallback((playerId) => {
+    const normalizedId = String(playerId || "");
+    if (normalizedId === String(user?.telegramId || "")) {
+      return user?.photo || user?.photoUrl || DEFAULT_PROFILE_PHOTO;
+    }
+    return playerProfiles[normalizedId]?.photoUrl
+      || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(normalizedId)}`;
+  }, [playerProfiles, user?.photo, user?.photoUrl, user?.telegramId]);
 
   useEffect(() => {
     const playerIds = [...new Set((players || []).map(String).filter((playerId) => playerId && !isBotPlayer(playerId)))];
@@ -369,26 +516,7 @@ function GamePage() {
 
   const playSound = useCallback((name) => {
     if (!settings.sound) return;
-
-    const sources = {
-      turn: "/1.mp3",
-      waiting: "/2.mp3",
-      deal: "/3.mp3",
-      call: "/call.mp3",
-    };
-    const source = sources[name] || sources.deal;
-
-    try {
-      if (!audioRefs.current[name]) {
-        audioRefs.current[name] = new Audio(source);
-      }
-
-      const audio = audioRefs.current[name];
-      audio.currentTime = 0;
-      audio.play().catch(() => {});
-    } catch (error) {
-      console.warn("Could not play sound:", error);
-    }
+    playGameSound(name);
   }, [settings.sound]);
 
   // Get actual cards for the logged-in user
@@ -435,19 +563,6 @@ function GamePage() {
     prevGameStatusRef.current = currentStatus;
     return undefined;
   }, [gameState.status, playSound]);
-
-  useEffect(() => {
-    const wasEnded = prevGameEndedRef.current;
-    if (!wasEnded && gameEnded) {
-      setIsWinning(true);
-      const timer = setTimeout(() => setIsWinning(false), 1800);
-      prevGameEndedRef.current = gameEnded;
-      return () => clearTimeout(timer);
-    }
-
-    prevGameEndedRef.current = gameEnded;
-    return undefined;
-  }, [gameEnded]);
 
   // Detect newly picked card and highlight it
   useEffect(() => {
@@ -499,10 +614,11 @@ function GamePage() {
 
   // ✨ GAME RULES LOGIC
   const isMyTurn = user && String(turn) === String(user.telegramId);
-  const canPick = !gameEnded && !gamePaused && isMyTurn && myCards.length === 10;
-  const canLay = !gameEnded && !gamePaused && isMyTurn && myCards.length === 11;
+  const canPick = !pendingGameplayAction && !gameEnded && !gamePaused && isMyTurn && myCards.length === 10;
+  const canLay = !pendingGameplayAction && !gameEnded && !gamePaused && isMyTurn && myCards.length === 11;
   const winAnalysis = analyzeWinningHand(myCards);
   const canDeclareWin =
+    !pendingGameplayAction &&
     !gameEnded &&
     !gamePaused &&
     isMyTurn &&
@@ -559,11 +675,34 @@ function GamePage() {
     return () => clearInterval(timer);
   }, []);
 
-  // Helper to show errors
-  const showError = (msg) => {
-    setErrorMsg(msg);
-    setTimeout(() => setErrorMsg(""), 3000); // clear after 3 seconds
-  };
+  useEffect(() => {
+    if (!opponentTurnTimedOut || !opponentTimeoutKey) return;
+    if (dismissedTimeoutKey === opponentTimeoutKey) return;
+    setShowLeaveConfirm(true);
+  }, [dismissedTimeoutKey, opponentTimeoutKey, opponentTurnTimedOut]);
+
+  const showGameNotification = useCallback((type, message, durationMs) => {
+    if (!message) return;
+    if (notificationTimerRef.current) clearTimeout(notificationTimerRef.current);
+    const id = `${Date.now()}-${Math.random()}`;
+    setGameNotification({ id, type, message });
+    notificationTimerRef.current = setTimeout(() => {
+      setGameNotification((current) => current?.id === id ? null : current);
+      notificationTimerRef.current = null;
+    }, durationMs ?? (type === "call" ? 4000 : 3000));
+  }, []);
+  const showError = useCallback(
+    (message) => showGameNotification("error", message, 3000),
+    [showGameNotification]
+  );
+  const showCall = useCallback(
+    (message) => showGameNotification("call", message, 4000),
+    [showGameNotification]
+  );
+
+  useEffect(() => () => {
+    if (notificationTimerRef.current) clearTimeout(notificationTimerRef.current);
+  }, []);
 
   useEffect(() => {
     if (!user?.telegramId) return undefined;
@@ -577,15 +716,14 @@ function GamePage() {
 
       playSound("call");
       const callerName = getPlayerName(payload.fromUserId);
-      setErrorMsg(t("playerCallNotification", { player: callerName }));
-      setTimeout(() => setErrorMsg(""), 4000);
+      showCall(t("playerCallNotification", { player: callerName }));
     };
 
     socket.on("player_call", handlePlayerCall);
     return () => {
       socket.off("player_call", handlePlayerCall);
     };
-  }, [getPlayerName, playSound, room?.id, room?.roomId, routeRoomId, t, user?.telegramId]);
+  }, [getPlayerName, playSound, room?.id, room?.roomId, routeRoomId, showCall, t, user?.telegramId]);
 
   useEffect(() => {
     const savedCall = gameState.lastCall;
@@ -595,9 +733,8 @@ function GamePage() {
     lastCallNonceRef.current = savedCall.nonce;
     playSound("call");
     const callerName = getPlayerName(savedCall.fromUserId);
-    setErrorMsg(t("playerCallNotification", { player: callerName }));
-    setTimeout(() => setErrorMsg(""), 4000);
-  }, [gameState.lastCall, getPlayerName, playSound, t, user?.telegramId]);
+    showCall(t("playerCallNotification", { player: callerName }));
+  }, [gameState.lastCall, getPlayerName, playSound, showCall, t, user?.telegramId]);
 
   // Always arrange cards in grouped order for display
   const groupedAndSortedCards = myCards
@@ -645,18 +782,21 @@ function GamePage() {
 
   // Click Handlers
   const handleCardClick = (index) => {
+    if (pendingGameplayActionRef.current) return;
     setSelectedHandIndex(index === selectedHandIndex ? null : index);
     setDeckSelected(false);
     setLaidSelected(false);
   };
 
   const handleDeckClick = () => {
+    if (pendingGameplayActionRef.current) return;
     setDeckSelected(!deckSelected);
     setSelectedHandIndex(null);
     setLaidSelected(false);
   };
 
   const handleLaidClick = () => {
+    if (pendingGameplayActionRef.current) return;
     if (laidCards.length === 0) return; // Ignore if empty
     if (isJoker(laidCards[laidCards.length - 1])) return;
     setLaidSelected(!laidSelected);
@@ -666,86 +806,119 @@ function GamePage() {
 
   // Action Handler connected to Backend Endpoints
   const handleAction = async (e, action, target, cardData = null) => {
-    e.stopPropagation();
+    e?.stopPropagation?.();
+    if (pendingGameplayActionRef.current) return false;
     
     // Safety check before hitting the API
-    if (action === "Pick" && !canPick) return showError(t("alreadyPicked"));
-    if (action === "Pick" && target === "Laid Card" && isJoker(laidCards[laidCards.length - 1])) {
-      return showError(t("jokerPickBlocked"));
+    if (action === "Pick" && !canPick) {
+      showError(t("alreadyPicked"));
+      return false;
     }
-    if (action === "Lay" && !canLay) return showError(t("mustPickFirst"));
+    if (action === "Pick" && target === "Laid Card" && isJoker(laidCards[laidCards.length - 1])) {
+      showError(t("jokerPickBlocked"));
+      return false;
+    }
+    if (action === "Lay" && !canLay) {
+      showError(t("mustPickFirst"));
+      return false;
+    }
 
     const payload = {
       userId: user.telegramId,
       roomId: room.id || room.roomId || room.name,
-      // ✨ Add socketId to ensure server has the latest for emitting updates
       socketId: socket.id
     };
+    let endpoint = "";
+    let kind = "";
 
-    try {
-      let endpoint = "";
-      if (action === "Pick" && target === "Deck") {
-        endpoint = "/gameplay/take-card";
-      } else if (action === "Pick" && target === "Laid Card") {
-        endpoint = "/gameplay/pick-card";
-      } else if (action === "Lay") {
-        endpoint = "/gameplay/lay-card";
-        payload.card = cardData;
-      }
-
-      if (endpoint) {
-        const response = await fetch(`${BASE_URL}${endpoint}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-        
-        const data = await response.json();
-        
-        // Handle backend errors (like out of turn, etc)
-        if (!response.ok || data.error) {
-          showError(data.error || t("actionFailed"));
-          console.error(`❌ Server error from ${endpoint}:`, data);
-        } else {
-          console.log(`✅ Server response from ${endpoint}:`, data);
-
-          // Trigger flying card animation on successful pick/lay actions
-          if (action === "Pick" && target === "Deck" && data.pickedCard) {
-            setPickedCardDecision({ card: data.pickedCard, revealed: false });
-            requestAnimationFrame(() => {
-              setPickedCardDecision((current) => current ? { ...current, revealed: true } : current);
-            });
-          } else if (action === "Pick" && target === "Laid Card") {
-            if (topLaidCard) {
-              setFlyingCard({
-                type: "deckToHand",
-                variant: "face",
-                card: topLaidCard,
-                animate: false,
-              });
-            }
-          } else if (action === "Lay" && cardData) {
-            setFlyingCard({
-              type: "handToLaid",
-              variant: "face",
-              card: cardData,
-              animate: false,
-            });
-          }
-        }
-      }
-    } catch (error) {
-      showError(t("networkError"));
-      console.error("❌ Error performing action:", error);
+    if (action === "Pick" && target === "Deck") {
+      endpoint = "/gameplay/take-card";
+      kind = "deck-pick";
+    } else if (action === "Pick" && target === "Laid Card") {
+      endpoint = "/gameplay/pick-card";
+      kind = "laid-pick";
+    } else if (action === "Lay") {
+      endpoint = "/gameplay/lay-card";
+      kind = "lay";
+      payload.card = cardData;
     }
-    
-    // Reset selections after action
+    if (!endpoint) return false;
+
+    const transaction = {
+      id: `${Date.now()}-${Math.random()}`,
+      kind,
+      userId: String(user.telegramId),
+      card: cardData,
+      decisionCard: kind === "lay" && pickedCardDecision?.card === cardData
+        ? pickedCardDecision.card
+        : null,
+      snapshot: gameState,
+      settled: false,
+    };
+    pendingGameplayActionRef.current = transaction;
+    setPendingGameplayAction({ id: transaction.id, kind });
+
+    if (kind === "deck-pick") {
+      setFlyingCard({
+        type: "deckToHand",
+        variant: "back",
+        card: null,
+        animate: false,
+      });
+    } else if (kind === "laid-pick") {
+      const optimisticCard = laidCards[laidCards.length - 1];
+      setGameState((current) => optimisticallyPickLaidCard(current, user.telegramId));
+      setFlyingCard({
+        type: "deckToHand",
+        variant: "face",
+        card: optimisticCard,
+        animate: false,
+      });
+    } else {
+      setGameState((current) => optimisticallyLayCard(current, user.telegramId, cardData, players));
+      setFlyingCard({
+        type: "handToLaid",
+        variant: "face",
+        card: cardData,
+        animate: false,
+      });
+      setPickedCardDecision(null);
+      setHighlightedCardKey(null);
+    }
+
     setSelectedHandIndex(null);
     setDeckSelected(false);
     setLaidSelected(false);
-    if (action === "Lay") {
-      // After laying a card, remove highlight from the previously picked card
-      setHighlightedCardKey(null);
+
+    try {
+      const response = await fetch(`${BASE_URL}${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+
+      if (transaction.settled) {
+        if (data.redisData) setGameState(data.redisData);
+        return true;
+      }
+      if (!response.ok || data.error) {
+        cancelGameplayTransaction(transaction, data.redisData || transaction.snapshot);
+        showError(data.error || t("actionFailed"));
+        console.error(`Server error from ${endpoint}:`, data);
+        return false;
+      }
+
+      if (data.redisData) setGameState(data.redisData);
+      settleGameplayTransaction(transaction, data.redisData, data.pickedCard);
+      return true;
+    } catch (error) {
+      if (transaction.settled) return true;
+      cancelGameplayTransaction(transaction);
+      syncGameState();
+      showError(t("networkError"));
+      console.error("Error performing action:", error);
+      return false;
     }
   };
 
@@ -767,9 +940,19 @@ function GamePage() {
       });
       const data = await response.json();
       if (!response.ok || data.error) {
+        if (data.redisData) {
+          setGameState(data.redisData);
+          if (Array.isArray(data.redisData.players)) setPlayers(data.redisData.players);
+        }
         if (endpoint === "/gameplay/play-again" && data.code === "INSUFFICIENT_BALANCE" && data.depositRequired) {
           setInsufficientBalancePopup({ entryFee: data.entryFee });
           await refreshUser?.();
+          return null;
+        }
+        if (endpoint === "/gameplay/leave-game" && data.code === "TURN_TIMEOUT_NOT_REACHED") {
+          setDismissedTimeoutKey(opponentTimeoutKey);
+          setShowLeaveConfirm(false);
+          showError(t("timeoutNotReached"));
           return null;
         }
         showError(data.error || t("actionFailed"));
@@ -786,13 +969,21 @@ function GamePage() {
     } finally {
       setIsActionLoading(false);
     }
-  }, [BASE_URL, refreshUser, room, t, user]);
+  }, [BASE_URL, opponentTimeoutKey, refreshUser, room, showError, t, user]);
 
-  const performLeaveGame = useCallback(async (forceLeave = false) => {
+  const performLeaveGame = useCallback(async (forceLeave = false, expectPenaltyFree = false) => {
     if (isLeavingRef.current) return;
     isLeavingRef.current = true;
-    const result = await postGameplayAction("/gameplay/leave-game", { forceLeave });
+    const result = await postGameplayAction("/gameplay/leave-game", {
+      forceLeave,
+      expectPenaltyFree,
+    });
     const finalStats = result?.redisData?.roomStats;
+    if (result?.managedDepartureCompleted) {
+      await refreshUser?.();
+      navigate("/second", { replace: true });
+      return;
+    }
     if (forceLeave && result) {
       await refreshUser?.();
       navigate("/second", { replace: true });
@@ -825,8 +1016,13 @@ function GamePage() {
 
   const handleConfirmLeaveGame = useCallback(() => {
     setShowLeaveConfirm(false);
-    performLeaveGame(true);
-  }, [performLeaveGame]);
+    performLeaveGame(true, opponentTurnTimedOut);
+  }, [opponentTurnTimedOut, performLeaveGame]);
+
+  const handleContinueWaiting = useCallback(() => {
+    setDismissedTimeoutKey(opponentTimeoutKey);
+    setShowLeaveConfirm(false);
+  }, [opponentTimeoutKey]);
 
   const handleReturnToLobby = useCallback(() => {
     performLeaveGame(false);
@@ -842,8 +1038,47 @@ function GamePage() {
   };
 
   const handlePlayAgain = async () => {
-    await postGameplayAction("/gameplay/play-again");
+    const result = await postGameplayAction("/gameplay/play-again", {
+      feeVersion: rematch?.feeVersion,
+    });
+    if (result?.roomRotated) {
+      navigate("/second", {
+        replace: true,
+        state: {
+          managedRoomRotated: true,
+          replacementRoom: result.replacementRoom || null,
+        },
+      });
+    }
   };
+
+  const handleAddRematchPlayer = async () => {
+    await postGameplayAction("/gameplay/rematch/add-player");
+  };
+
+  const handleHoldRematchCountdown = async () => {
+    await postGameplayAction("/gameplay/rematch/hold");
+  };
+
+  const handleResumeRematchCountdown = async () => {
+    await postGameplayAction("/gameplay/rematch/resume");
+  };
+
+  const handleCancelRematchRecruitment = async () => {
+    await postGameplayAction("/gameplay/rematch/cancel-add");
+  };
+
+  const handleUpdateRematchFee = async () => {
+    await postGameplayAction("/gameplay/rematch/update-fee", {
+      entryFee: Number(rematchFeeDraft),
+    });
+  };
+
+  useEffect(() => {
+    if (gameState.rematch?.active) {
+      setRematchFeeDraft(String(proposedRematchFee || ""));
+    }
+  }, [gameState.rematch?.active, gameState.rematch?.feeVersion, proposedRematchFee]);
 
   const handleInsertPickedCard = () => {
     setPickedCardDecision(null);
@@ -852,11 +1087,7 @@ function GamePage() {
   const handleLayPickedCard = async () => {
     const card = pickedCardDecision?.card;
     if (!card) return;
-    const result = await postGameplayAction("/gameplay/lay-card", { card });
-    if (result) {
-      setPickedCardDecision(null);
-      setHighlightedCardKey(null);
-    }
+    await handleAction(null, "Lay", "Hand", card);
   };
 
   const topLaidCard = laidCards.length > 0 ? laidCards[laidCards.length - 1] : null;
@@ -925,23 +1156,46 @@ function GamePage() {
       paddingTop: PAGE_TOP_PADDING,
       boxSizing: "border-box",
     },
-    errorToast: {
+    gameNotification: (type) => ({
       position: "absolute",
-      top: "15%",
+      top: `calc(${PAGE_TOP_PADDING} + 16px)`,
       left: "50%",
       transform: "translateX(-50%)",
-      background: "#d9534f",
-      color: "white",
-      padding: "10px 20px",
+      width: "min(420px, calc(100vw - 28px))",
+      minHeight: "48px",
+      boxSizing: "border-box",
+      display: "flex",
+      alignItems: "center",
+      gap: "11px",
+      background: type === "call"
+        ? "linear-gradient(145deg, rgba(14,75,40,0.97), rgba(4,34,20,0.97))"
+        : "linear-gradient(145deg, rgba(91,25,28,0.98), rgba(45,10,15,0.98))",
+      color: colors.cream,
+      padding: "10px 14px",
       borderRadius: "10px",
-      fontWeight: "bold",
-      border: "1px solid rgba(255,255,255,0.36)",
-      boxShadow: "0 14px 30px rgba(0,0,0,0.42), inset 0 1px 0 rgba(255,255,255,0.42)",
+      fontWeight: 700,
+      lineHeight: 1.3,
+      border: `1px solid ${type === "call" ? colors.gold : "#ff7777"}`,
+      boxShadow: type === "call"
+        ? "0 14px 30px rgba(0,0,0,0.42), 0 0 18px rgba(218,170,63,0.18)"
+        : "0 14px 30px rgba(0,0,0,0.42), 0 0 18px rgba(239,68,68,0.22)",
+      backdropFilter: "blur(12px) saturate(1.15)",
+      WebkitBackdropFilter: "blur(12px) saturate(1.15)",
       zIndex: 1000,
-      opacity: errorMsg ? 1 : 0,
-      transition: "opacity 0.3s ease",
       pointerEvents: "none",
-    },
+      animation: "gameNotificationIn 180ms ease-out both",
+    }),
+    gameNotificationIcon: (type) => ({
+      width: "30px",
+      height: "30px",
+      flex: "0 0 30px",
+      display: "grid",
+      placeItems: "center",
+      borderRadius: "8px",
+      color: type === "call" ? "#18200d" : "#fff",
+      background: type === "call" ? colors.gold : "#d9424b",
+      boxShadow: "inset 0 1px 0 rgba(255,255,255,0.35)",
+    }),
     centerArea: {
       position: "absolute",
       top: "45%",
@@ -1096,7 +1350,7 @@ function GamePage() {
     },
     playerArea: {
       position: "absolute",
-      bottom: "2vh", 
+      bottom: "calc(2vh + 2rem + env(safe-area-inset-bottom, 0px))",
       left: "0",
       width: "100%",
       display: "flex",
@@ -1109,12 +1363,12 @@ function GamePage() {
       justifyContent: "center",
       alignItems: "flex-end",
       marginTop: "8px",
-      height: "clamp(90px, 15vw, 130px)",
+      height: "clamp(100px, 17vw, 140px)",
       paddingBottom: "35px",
     },
     card: {
-      width: "clamp(40px, 8vw, 60px)", 
-      height: "clamp(60px, 12vw, 90px)",
+      width: "clamp(45px, 9vw, 66px)",
+      height: "clamp(68px, 13.5vw, 99px)",
       background: "#fffaf0",
       borderRadius: "8px",
       border: "1px solid rgba(255,255,255,0.82)",
@@ -1199,32 +1453,37 @@ function GamePage() {
       filter: "grayscale(0.5)",
     },
     gameOverOverlay: {
-      position: "absolute",
+      position: "fixed",
       inset: 0,
-      background: "rgba(0,0,0,0.62)",
-      backdropFilter: "blur(10px)",
-      WebkitBackdropFilter: "blur(10px)",
+      background: "radial-gradient(circle at 50% 12%, rgba(241,196,15,0.2), transparent 34%), rgba(0,0,0,0.76)",
+      backdropFilter: "blur(14px)",
+      WebkitBackdropFilter: "blur(14px)",
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
       zIndex: 2000,
-      padding: "20px",
+      padding: "10px",
     },
     gameOverPopup: {
-      width: "min(520px, 92vw)",
+      width: "min(390px, 94vw)",
+      maxHeight: "calc(100dvh - 20px)",
+      overflowY: "auto",
       ...glassPanel,
+      background: "linear-gradient(155deg, rgba(16,67,35,0.98), rgba(4,24,13,0.98))",
+      border: `1px solid ${colors.gold}`,
       borderRadius: "14px",
-      padding: "18px 20px",
+      padding: "10px",
+      boxShadow: "0 28px 70px rgba(0,0,0,0.72), 0 0 38px rgba(241,196,15,0.16), inset 0 1px 0 rgba(255,255,255,0.22)",
     },
     gameOverTitle: {
       margin: 0,
-      fontSize: "1.2rem",
+      fontSize: "clamp(0.98rem, 3.6vw, 1.18rem)",
       color: colors.gold,
     },
     gameOverSubtitle: {
-      marginTop: "8px",
+      marginTop: "1px",
       opacity: 0.85,
-      fontSize: "0.9rem",
+      fontSize: "0.76rem",
     },
     gameOverDetails: {
       marginTop: "14px",
@@ -1235,11 +1494,212 @@ function GamePage() {
       lineHeight: 1.5,
     },
     gameOverActions: {
-      marginTop: "16px",
-      display: "flex",
-      justifyContent: "flex-end",
-      gap: "10px",
+      marginTop: "9px",
+      display: "grid",
+      gridTemplateColumns: "minmax(0, 0.8fr) minmax(0, 1.2fr)",
+      gap: "7px",
     },
+    resultHero: (won) => ({
+      position: "relative",
+      overflow: "hidden",
+      display: "flex",
+      alignItems: "center",
+      gap: "8px",
+      padding: "7px 9px",
+      borderRadius: "10px",
+      background: won
+        ? "linear-gradient(135deg, rgba(241,196,15,0.22), rgba(42,155,78,0.2))"
+        : "linear-gradient(135deg, rgba(111,124,144,0.22), rgba(28,35,48,0.35))",
+      border: won ? "1px solid rgba(255,226,79,0.55)" : "1px solid rgba(186,199,218,0.28)",
+    }),
+    resultHeroIcon: (won) => ({
+      width: "32px",
+      height: "32px",
+      flex: "0 0 32px",
+      display: "grid",
+      placeItems: "center",
+      borderRadius: "50%",
+      color: won ? colors.textDark : "#e8edf5",
+      background: won
+        ? "linear-gradient(180deg, #fff05f, #d7a91f)"
+        : "linear-gradient(180deg, #657086, #31394a)",
+      boxShadow: won ? "0 0 16px rgba(255,232,92,0.4)" : "0 6px 14px rgba(0,0,0,0.3)",
+      fontSize: "1.15rem",
+    }),
+    resultHeroCopy: {
+      minWidth: 0,
+      display: "flex",
+      flexDirection: "column",
+      gap: "2px",
+    },
+    resultEyebrow: {
+      color: "rgba(255,255,255,0.68)",
+      fontSize: "0.62rem",
+      fontWeight: 800,
+      letterSpacing: "0.12em",
+      textTransform: "uppercase",
+    },
+    resultHandPanel: {
+      minWidth: 0,
+      marginTop: "7px",
+      padding: "7px",
+      borderRadius: "9px",
+      background: "rgba(241,196,15,0.08)",
+      border: "1px solid rgba(241,196,15,0.3)",
+    },
+    resultHandTitle: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: "8px",
+      marginBottom: "5px",
+      fontSize: "0.66rem",
+      fontWeight: 800,
+    },
+    resultCardGroups: {
+      display: "flex",
+      flexWrap: "wrap",
+      alignItems: "flex-end",
+      justifyContent: "center",
+      gap: "4px",
+    },
+    resultCardGroup: {
+      display: "flex",
+      padding: "3px",
+      borderRadius: "6px",
+      background: "rgba(0,0,0,0.18)",
+    },
+    resultCard: {
+      width: "clamp(22px, 5.6vw, 28px)",
+      height: "clamp(33px, 8vw, 41px)",
+      marginLeft: "-5px",
+      paddingTop: "3px",
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      justifyContent: "flex-start",
+      borderRadius: "6px",
+      border: "1px solid rgba(255,255,255,0.9)",
+      background: "#fffaf0",
+      boxShadow: "-2px 3px 8px rgba(0,0,0,0.42)",
+      fontSize: "clamp(0.58rem, 2vw, 0.74rem)",
+      fontWeight: 900,
+      lineHeight: 1,
+      overflow: "hidden",
+    },
+    resultWinAmount: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: "7px",
+      marginTop: "7px",
+      padding: "6px 8px",
+      borderRadius: "9px",
+      color: colors.gold,
+      background: "rgba(241,196,15,0.1)",
+      border: "1px solid rgba(241,196,15,0.26)",
+      fontSize: "0.75rem",
+      fontWeight: 800,
+    },
+    rematchPanel: {
+      margin: "8px 0 0",
+      padding: "8px",
+      borderRadius: "10px",
+      background: "rgba(255,255,255,0.065)",
+      border: "1px solid rgba(255,255,255,0.12)",
+    },
+    rematchTimer: {
+      marginBottom: "6px",
+      color: "rgba(255,255,255,0.72)",
+      fontSize: "0.72rem",
+      fontWeight: 750,
+      textAlign: "center",
+      lineHeight: 1.3,
+    },
+    rematchTimerNumber: {
+      display: "inline-block",
+      margin: "0 2px",
+      color: "#ff6262",
+      fontSize: "0.86rem",
+      fontWeight: 950,
+      textShadow: "0 0 8px rgba(255,65,65,0.72)",
+    },
+    feeUpdatedBanner: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: "8px",
+      flexWrap: "wrap",
+      marginBottom: "7px",
+      padding: "7px 9px",
+      borderRadius: "10px",
+      border: "1px solid rgba(255,120,80,0.55)",
+      background: "linear-gradient(135deg, rgba(255,90,60,0.22), rgba(255,180,40,0.12))",
+      boxShadow: "0 0 14px rgba(255,90,40,0.22)",
+    },
+    feeChipOld: {
+      opacity: 0.75,
+      textDecoration: "line-through",
+      fontSize: "0.72rem",
+      fontWeight: 750,
+      color: "rgba(255,220,200,0.85)",
+    },
+    feeChipArrow: {
+      fontSize: "0.85rem",
+      fontWeight: 900,
+      color: "#ffd166",
+    },
+    feeChipNew: {
+      fontSize: "0.92rem",
+      fontWeight: 950,
+      color: "#ff8f6b",
+      textShadow: "0 0 10px rgba(255,100,60,0.55)",
+      letterSpacing: "0.02em",
+    },
+    feeChipTag: {
+      fontSize: "0.58rem",
+      fontWeight: 850,
+      textTransform: "uppercase",
+      letterSpacing: "0.06em",
+      padding: "2px 6px",
+      borderRadius: "999px",
+      background: "rgba(255,100,70,0.28)",
+      color: "#ffd0c0",
+      border: "1px solid rgba(255,140,100,0.4)",
+    },
+    feeRow: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: "6px",
+      marginBottom: "6px",
+      fontSize: "0.74rem",
+      fontWeight: 850,
+    },
+    compactRematchButton: {
+      minWidth: 0,
+      width: "100%",
+      padding: "7px 8px",
+      borderRadius: "7px",
+      fontSize: "0.72rem",
+      lineHeight: 1.1,
+      whiteSpace: "normal",
+    },
+    rematchIconButton: (active = false) => ({
+      width: "30px",
+      height: "30px",
+      flex: "0 0 30px",
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: 0,
+      borderRadius: "8px",
+      border: active ? "1px solid rgba(255,224,92,0.65)" : "1px solid rgba(255,255,255,0.2)",
+      background: active ? "rgba(241,196,15,0.18)" : "rgba(255,255,255,0.07)",
+      color: active ? colors.gold : colors.cream,
+      cursor: "pointer",
+      boxShadow: active ? "0 0 10px rgba(241,196,15,0.2)" : "none",
+    }),
     confirmOverlay: {
       position: "absolute",
       inset: 0,
@@ -1320,6 +1780,28 @@ function GamePage() {
       lineHeight: 1.45,
       fontSize: "0.88rem",
       opacity: 0.9,
+    },
+    leavePenaltyWarning: {
+      margin: "12px 0 0",
+      padding: "10px 12px",
+      borderRadius: "8px",
+      border: "1px solid rgba(255, 82, 82, 0.72)",
+      background: "rgba(160, 18, 18, 0.28)",
+      color: "#ff6b6b",
+      fontSize: "0.9rem",
+      fontWeight: 900,
+      lineHeight: 1.45,
+    },
+    timeoutFreeNotice: {
+      margin: "12px 0 0",
+      padding: "10px 12px",
+      borderRadius: "8px",
+      border: "1px solid rgba(99, 214, 139, 0.7)",
+      background: "rgba(25, 126, 66, 0.24)",
+      color: "#78e6a0",
+      fontSize: "0.9rem",
+      fontWeight: 900,
+      lineHeight: 1.45,
     },
     confirmActions: {
       display: "flex",
@@ -1482,6 +1964,42 @@ function GamePage() {
       flexDirection: "column",
       gap: "7px",
     },
+    progressSectionTitle: {
+      margin: "3px 0 7px",
+      color: colors.gold,
+      fontSize: "0.72rem",
+      fontWeight: 900,
+      letterSpacing: "0.08em",
+      textTransform: "uppercase",
+    },
+    balanceHighlight: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: "12px",
+      padding: "10px 11px",
+      marginBottom: "11px",
+      borderRadius: "9px",
+      border: "1px solid rgba(255,246,94,0.35)",
+      background: "linear-gradient(135deg, rgba(255,246,94,0.16), rgba(255,255,255,0.06))",
+    },
+    roster: {
+      display: "flex",
+      flexWrap: "wrap",
+      gap: "6px",
+      marginBottom: "11px",
+    },
+    rosterPlayer: {
+      maxWidth: "100%",
+      overflow: "hidden",
+      textOverflow: "ellipsis",
+      whiteSpace: "nowrap",
+      padding: "5px 8px",
+      borderRadius: "999px",
+      border: "1px solid rgba(245,238,194,0.18)",
+      background: "rgba(255,255,255,0.07)",
+      fontSize: "0.7rem",
+    },
     practiceHelpButton: {
       position: "absolute",
       top: `calc(${PAGE_TOP_PADDING} + 54px)`,
@@ -1617,6 +2135,24 @@ function GamePage() {
       fontSize: "0.74rem",
       lineHeight: 1.45,
     },
+    roundHeader: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: "8px",
+      marginBottom: "5px",
+    },
+    roundRow: {
+      display: "flex",
+      justifyContent: "space-between",
+      gap: "10px",
+      color: "rgba(245,238,194,0.82)",
+    },
+    roundValue: {
+      color: colors.cream,
+      fontWeight: 700,
+      textAlign: "right",
+    },
     turnLoader: {
       marginTop: "6px",
       width: "28px",
@@ -1714,7 +2250,6 @@ function GamePage() {
   const leaveSummaryPayout = Number(leaveSummary?.payouts?.[myUserId] || 0);
   const leaveSummaryFees = Number(leaveSummary?.playerFeesPaid?.[myUserId] || myFeesPaid || 0);
   const leaveSummaryPot = Number(leaveSummary?.totalPot || totalPot || 0);
-  const leaveSummaryCommission = Number(leaveSummary?.commissionAmount || 0);
   const lastLay = gameState.lastLay || {};
   const lastLayAt = Date.parse(lastLay.at || "");
   const callTargetId = String(lastLay.targetPlayerId || turn || "");
@@ -1729,7 +2264,6 @@ function GamePage() {
     String(lastLay.playerId || "") === myUserId &&
     callTargetId &&
     callTargetId !== myUserId &&
-    !isBotPlayer(callTargetId) &&
     secondsSinceLastLay >= 10 &&
     nowTick >= callCooldownUntil
   );
@@ -1744,18 +2278,13 @@ function GamePage() {
       targetUserId: callTargetId,
     });
     setCallCooldownUntil(Date.now() + 10000);
-    showError(t("playerCallSent", { player: getPlayerName(callTargetId) }));
+    showCall(t("playerCallSent", { player: getPlayerName(callTargetId) }));
   };
   const formatVote = (vote) => {
     if (vote === "continue") return t("continue");
     if (vote === "leave") return t("leave");
     return vote;
   };
-  const formatResultReason = (reason) => {
-    if (!reason || reason === "valid-hand") return t("validHand");
-    return reason;
-  };
-
   return (
     <div style={styles.container}>
       <style>
@@ -1824,11 +2353,27 @@ function GamePage() {
             from { filter: drop-shadow(0 0 4px rgba(239,68,68,0.75)) drop-shadow(0 0 8px rgba(239,68,68,0.55)); }
             to { filter: drop-shadow(0 0 8px #ef4444) drop-shadow(0 0 18px rgba(239,68,68,0.95)); }
           }
+          @keyframes gameNotificationIn {
+            from { opacity: 0; transform: translate(-50%, -8px) scale(0.98); }
+            to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+          }
           .laid-history::-webkit-scrollbar { display: none; }
         `}
       </style>
       {/* ✨ Error Notification Toast */}
-      {errorMsg && <div style={styles.errorToast}>{errorMsg}</div>}
+      {gameNotification && (
+        <div
+          key={gameNotification.id}
+          style={styles.gameNotification(gameNotification.type)}
+          role={gameNotification.type === "error" ? "alert" : "status"}
+          aria-live={gameNotification.type === "error" ? "assertive" : "polite"}
+        >
+          <span style={styles.gameNotificationIcon(gameNotification.type)} aria-hidden="true">
+            {gameNotification.type === "call" ? <PhoneCall size={18} /> : <CircleAlert size={18} />}
+          </span>
+          <span>{gameNotification.message}</span>
+        </div>
+      )}
 
       <div style={styles.roomInfoBanner}>
         <button
@@ -1846,7 +2391,7 @@ function GamePage() {
           title={t("gameProgress")}
           onClick={() => setShowProgress((isOpen) => !isOpen)}
         >
-          <History size={19} />
+          <DollarSign size={20} />
         </button>
       </div>
 
@@ -1889,6 +2434,12 @@ function GamePage() {
             </button>
           </div>
 
+          <div style={styles.balanceHighlight}>
+            <span style={styles.progressDetailLabel}>{t("currentBalance")}</span>
+            <span style={styles.progressDetailValue}><CoinAmount value={user?.balance} size={17} /></span>
+          </div>
+
+          <div style={styles.progressSectionTitle}>{t("gameProgress")}</div>
           <div style={styles.progressDetails}>
             <div style={styles.progressDetailRow}>
               <span style={styles.progressDetailLabel}>{t("roomName")}</span>
@@ -1921,17 +2472,36 @@ function GamePage() {
             </div>
           </div>
 
+          <div style={styles.progressSectionTitle}>{t("players")}</div>
+          <div style={styles.roster}>
+            {progressPlayers.map((playerId) => (
+              <span style={styles.rosterPlayer} key={`roster-${playerId}`}>
+                {getPlayerName(playerId)}
+              </span>
+            ))}
+          </div>
+
+          <div style={styles.progressSectionTitle}>{t("gameHistory")}</div>
           <div style={styles.progressList}>
             {gameHistory.length > 0 ? (
               gameHistory.map((game) => (
                 <div style={styles.progressRound} key={`round-${game.round}`}>
-                  <div>
+                  <div style={styles.roundHeader}>
                     <strong style={{ color: colors.gold }}>{t("gameRound", { round: game.round })}</strong>
-                    {" "} - {t("winner")}: {getPlayerName(game.winnerId)}
-                    {game.jokerBonus ? ` (${t("jokerBonus")})` : ""}
+                    {game.jokerBonus ? <span>{t("jokerBonus")}</span> : null}
                   </div>
-                  <div>{t("players")}: {(game.players || []).map((playerId) => getPlayerName(playerId)).join(", ")}</div>
-                  <div>{t("totalAmount")}: {formatBirr(game.totalAmountToWin)}</div>
+                  <div style={styles.roundRow}>
+                    <span>{t("winner")}</span>
+                    <span style={styles.roundValue}>{getPlayerName(game.winnerId)}</span>
+                  </div>
+                  <div style={styles.roundRow}>
+                    <span>{t("players")}</span>
+                    <span style={styles.roundValue}>{(game.players || []).map((playerId) => getPlayerName(playerId)).join(", ")}</span>
+                  </div>
+                  <div style={styles.roundRow}>
+                    <span>{t("totalAmount")}</span>
+                    <span style={styles.roundValue}>{formatBirr(game.totalAmountToWin)}</span>
+                  </div>
                 </div>
               ))
             ) : (
@@ -1965,6 +2535,29 @@ function GamePage() {
 
       {/* Center Table (Deck & Discard Pile) */}
       <div style={styles.centerArea}>
+        {pendingGameplayAction && (
+          <span
+            role="status"
+            aria-live="polite"
+            style={{
+              position: "absolute",
+              top: "calc(100% + 13px)",
+              left: "50%",
+              transform: "translateX(-50%)",
+              whiteSpace: "nowrap",
+              padding: "4px 9px",
+              borderRadius: "999px",
+              background: "rgba(8, 35, 22, 0.9)",
+              border: `1px solid ${colors.gold}`,
+              color: colors.cream,
+              fontSize: "0.68rem",
+              fontWeight: 800,
+              boxShadow: "0 3px 12px rgba(0,0,0,0.35)",
+            }}
+          >
+            {t("syncingAction")}
+          </span>
+        )}
         {/* The remaining deck */}
         <div style={styles.pickGlow(opponentPickIndicator === "deck")} onClick={handleDeckClick}>
           <div style={styles.deckCard}></div>
@@ -2033,9 +2626,13 @@ function GamePage() {
           >
             <div style={{ position: "relative" }}>
               <img 
-                src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${opponentId}`} 
+                src={getPlayerPhoto(opponentId)}
                 alt={t("opponent")} 
                 style={styles.avatar(isOpponentTurn)} 
+                onError={(event) => {
+                  event.currentTarget.onerror = null;
+                  event.currentTarget.src = DEFAULT_PROFILE_PHOTO;
+                }}
               />
               <div style={styles.cardCount}>{opponentCardCount}</div>
             </div>
@@ -2056,10 +2653,24 @@ function GamePage() {
       {showLeaveConfirm && (
         <div style={styles.confirmOverlay}>
           <div style={styles.confirmPopup}>
-            <h3 style={styles.confirmTitle}>{t("leaveGameTitle")}</h3>
+            <h3 style={styles.confirmTitle}>
+              {opponentTurnTimedOut ? t("opponentNotRespondingTitle") : t("leaveGameTitle")}
+            </h3>
             <p style={styles.confirmText}>
-              {t("leaveGameText")}
+              {opponentTurnTimedOut
+                ? t("opponentNotRespondingText", { player: getPlayerName(timedOutOpponentId) })
+                : t("leaveGameText")}
             </p>
+            {opponentTurnTimedOut && (
+              <p style={styles.timeoutFreeNotice} role="status">
+                {t("leaveWithoutDeductionNotice")}
+              </p>
+            )}
+            {!opponentTurnTimedOut && currentRoundLeavePenalty > 0 && (
+              <p style={styles.leavePenaltyWarning} role="alert">
+                {t("leavePenaltyWarning", { amount: formatBirr(currentRoundLeavePenalty) })}
+              </p>
+            )}
             <div style={styles.gameOverDetails}>
               <div>{t("gamesYouPlayed")}: {completedGamesForYou.length}</div>
               <div>{t("youWon")}: {myCompletedWins}</div>
@@ -2071,17 +2682,19 @@ function GamePage() {
             <div style={styles.confirmActions}>
               <button
                 style={styles.confirmCancelBtn}
-                onClick={() => setShowLeaveConfirm(false)}
+                onClick={opponentTurnTimedOut
+                  ? handleContinueWaiting
+                  : () => setShowLeaveConfirm(false)}
                 disabled={isActionLoading}
               >
-                {t("cancel")}
+                {opponentTurnTimedOut ? t("continueWaiting") : t("cancel")}
               </button>
               <button
                 style={styles.confirmLeaveBtn}
                 onClick={handleConfirmLeaveGame}
                 disabled={isActionLoading}
               >
-                {t("ok")}
+                {opponentTurnTimedOut ? t("leaveWithoutDeduction") : t("confirmLeaveYes")}
               </button>
             </div>
           </div>
@@ -2098,7 +2711,6 @@ function GamePage() {
             <div style={styles.gameOverDetails}>
               <div>{t("playedWith")}: {formatBirr(leaveSummaryFees)}</div>
               <div>{t("totalRoomAmount")}: {formatBirr(leaveSummaryPot)}</div>
-              <div>{t("commission")}: {formatBirr(leaveSummaryCommission)}</div>
               <div>{t("youReceive")}: {formatBirr(leaveSummaryPayout)}</div>
               <div>{t("gamesPlayed")}: {Number(leaveSummary.gamesPlayed || 0)}</div>
             </div>
@@ -2232,57 +2844,223 @@ function GamePage() {
         </div>
       )}
 
-      {gameEnded && gameResult && (
+      {gameEnded && (gameResult || rematch) && (
         <div style={styles.gameOverOverlay}>
           <div
             style={{
               ...styles.gameOverPopup,
-              animation: isWinning
+              animation: didCurrentUserWin
                 ? "winPopup 0.48s ease-out, winGlow 1.2s ease-in-out 0.15s 2"
-                : "none",
+                : "winPopup 0.42s ease-out",
             }}
           >
-            <h3 style={styles.gameOverTitle}>{t("gameOver")}</h3>
-            <div style={styles.gameOverSubtitle}>
-              {t("winner")}: {getPlayerName(gameResult.winnerId)}
-            </div>
-            <div style={styles.gameOverDetails}>
-              <div>{t("pattern")}: {gameResult.winnerPattern || "4-3-3-1"}</div>
-              <div>{t("reason")}: {formatResultReason(gameResult.reason)}</div>
-              {gameResult.jokerBonus && <div>{t("jokerBonusDetail")}</div>}
-              {isPracticeGame ? (
-                <div>{t("practiceFreeNote")}</div>
-              ) : (
-                <>
-                  <div>{t("playedWith")}: {formatBirr(myFeesPaid)}</div>
-                  <div>{t("totalRoomAmount")}: {formatBirr(totalPot)}</div>
-                  <div>{t("commission")}: {formatBirr(projectedCommission)}</div>
-                  <div>{t("youReceived")}: {formatBirr(myProjectedWin)}</div>
-                </>
-              )}
-              <div>
-                {t("ended")}:{" "}
-                {gameResult.endedAt
-                  ? new Date(gameResult.endedAt).toLocaleString()
-                  : t("notAvailable")}
+            {!isPreviousRoundSpectator && gameResult ? <>
+            <div style={styles.resultHero(didCurrentUserWin)}>
+              <div style={styles.resultHeroIcon(didCurrentUserWin)}>
+                <span role="img" aria-label={didCurrentUserWin ? "happy" : "sad"}>
+                  {didCurrentUserWin ? "😊" : "😢"}
+                </span>
+              </div>
+              <div style={styles.resultHeroCopy}>
+                <span style={styles.resultEyebrow}>
+                  {t("gameOver")}
+                </span>
+                <h3 style={styles.gameOverTitle}>
+                  {didCurrentUserWin ? t("victoryTitle") : t("defeatTitle")}
+                </h3>
+                <div style={styles.gameOverSubtitle}>
+                  {t("winner")}: <strong>{getPlayerName(gameResult.winnerId)}</strong>
+                </div>
               </div>
             </div>
+
+            <div style={styles.resultWinAmount}>
+              <Trophy size={14} />
+              <span>{t("winAmount")}: {formatBirr(settledRoundPayout || 0)}</span>
+            </div>
+
+            <div style={styles.resultHandPanel}>
+              <div style={styles.resultHandTitle}>
+                <span>{getPlayerName(gameResult.winnerId)}</span>
+                <span style={{ color: colors.gold }}>{t("winningCards")}</span>
+              </div>
+              <div style={styles.resultCardGroups}>
+                {getArrangedCardGroups(winnerCards).map((group) => (
+                  <div key={`winner-${group.rank}`} style={styles.resultCardGroup}>
+                    {group.cards.map((card, cardIndex) => (
+                      <div
+                        key={`winner-${group.rank}-${card.suit}-${cardIndex}`}
+                        style={{
+                          ...styles.resultCard,
+                          marginLeft: cardIndex === 0 ? 0 : styles.resultCard.marginLeft,
+                          color: card.color || "#111",
+                        }}
+                      >
+                        {renderCardFace(card)}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+            </> : (
+              <div style={styles.resultHero(false)}>
+                <div style={styles.resultHeroIcon(false)}><RefreshCw size={27} /></div>
+                <div style={styles.resultHeroCopy}>
+                  <span style={styles.resultEyebrow}>{t("rematchLobby")}</span>
+                  <h3 style={styles.gameOverTitle}>{t("joinNextRound")}</h3>
+                </div>
+              </div>
+            )}
+            {rematch && (
+              <div style={styles.rematchPanel}>
+                <div style={{ fontWeight: 800, marginBottom: "4px", fontSize: "0.78rem" }}>
+                  {t("rematchReadyUp")}
+                </div>
+                <div role="timer" aria-live="polite" style={styles.rematchTimer}>
+                  {rematch.countdownPaused
+                    ? rematch.holdReason === "creator"
+                      ? t("countdownHeldByCreator")
+                      : t("recruitmentPaused")
+                    : rematchSecondsRemaining > 0
+                    ? (() => {
+                        const marker = "__SECONDS__";
+                        const parts = String(t("rematchStartsIn", { seconds: marker })).split(marker);
+                        return <>{parts[0]}<span style={styles.rematchTimerNumber}>{rematchSecondsRemaining}</span>{parts.slice(1).join(marker)}</>;
+                      })()
+                    : t("resolvingRematch")}
+                </div>
+                {rematch.feeUpdatedAt ? (
+                  <div role="alert" style={styles.feeUpdatedBanner}>
+                    <span style={styles.feeChipTag}>{t("feeUpdatedAlert")}</span>
+                    <span style={styles.feeChipOld}>{formatBirr(rematch.previousEntryFee || 0)}</span>
+                    <span style={styles.feeChipArrow}>→</span>
+                    <span style={styles.feeChipNew}>{formatBirr(proposedRematchFee)}</span>
+                    <span style={styles.feeChipTag}>{t("feeUpdatedReagree")}</span>
+                  </div>
+                ) : (
+                  <div style={styles.feeRow}>
+                    <span style={{ opacity: 0.75 }}>{t("nextRoundFee")}</span>
+                    <span style={{ color: colors.gold }}>{formatBirr(proposedRematchFee)}</span>
+                  </div>
+                )}
+                {(rematch.participantIds || []).map((playerId) => (
+                  <div key={`rematch-${playerId}`} style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: "8px",
+                    padding: "2px 0",
+                    fontSize: "0.7rem",
+                  }}>
+                    <span>{getPlayerName(playerId)}</span>
+                    <span style={{ color: rematchReadyIds.has(String(playerId)) ? "#65e895" : "#ffd166" }}>
+                      {rematchReadyIds.has(String(playerId)) ? t("rematchReady") : t("rematchWaiting")}
+                    </span>
+                  </div>
+                ))}
+                {isRoomCreator && !isManagedBotRoom && (
+                  <div style={{ marginTop: "7px", display: "grid", gap: "6px" }}>
+                    <div style={{ display: "flex", gap: "6px" }}>
+                      <input
+                        type="number"
+                        min="10"
+                        step="5"
+                        value={rematchFeeDraft}
+                        onChange={(event) => setRematchFeeDraft(event.target.value)}
+                        aria-label={t("nextRoundFee")}
+                        style={{ flex: 1, minWidth: 0, padding: "6px 7px", borderRadius: "7px", fontSize: "0.72rem" }}
+                      />
+                      <button
+                        style={{ ...styles.btnWin, ...styles.compactRematchButton, width: "auto", flex: "0 0 auto" }}
+                        onClick={handleUpdateRematchFee}
+                        disabled={isActionLoading || Number(rematchFeeDraft) === proposedRematchFee}
+                      >
+                        {t("updateFee")}
+                      </button>
+                    </div>
+                    {rematch.recruiting ? (
+                      <div style={{ display: "flex", justifyContent: "center" }}>
+                        <button
+                          style={styles.rematchIconButton(false)}
+                          onClick={handleCancelRematchRecruitment}
+                          disabled={isActionLoading}
+                          title={t("cancelAddPlayer")}
+                          aria-label={t("cancelAddPlayer")}
+                        >
+                          <X size={15} />
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", justifyContent: "center", gap: "7px" }}>
+                        <button
+                          style={styles.rematchIconButton(rematch.countdownPaused)}
+                          onClick={rematch.countdownPaused
+                            ? handleResumeRematchCountdown
+                            : handleHoldRematchCountdown}
+                          disabled={isActionLoading}
+                          title={rematch.countdownPaused ? t("resumeCountdown") : t("holdCountdown")}
+                          aria-label={rematch.countdownPaused ? t("resumeCountdown") : t("holdCountdown")}
+                        >
+                          {rematch.countdownPaused ? <Play size={14} /> : <Pause size={14} />}
+                        </button>
+                        {(rematch.participantIds || []).length < 4 && (
+                          <button
+                            style={styles.rematchIconButton(true)}
+                            onClick={handleAddRematchPlayer}
+                            disabled={isActionLoading}
+                            title={t("addPlayer")}
+                            aria-label={t("addPlayer")}
+                          >
+                            <UserPlus size={15} />
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
             <div style={styles.gameOverActions}>
               <button
-                style={styles.btnLeave}
+                style={{ ...styles.btnLeave, ...styles.compactRematchButton }}
                 onClick={handleLeaveGame}
                 disabled={isActionLoading}
               >
-                {t("leave")}
+                <LogOut size={16} /> {t("leave")}
               </button>
               <button
-                style={styles.btnWin}
+                style={{ ...styles.btnWin, ...styles.compactRematchButton }}
                 onClick={handlePlayAgain}
-                disabled={isActionLoading}
+                disabled={isActionLoading || isRematchReady}
               >
-                {isActionLoading ? t("starting") : t("playAgain")}
+                <RefreshCw size={16} /> {isRematchReady
+                  ? t("waitingForPlayers")
+                  : isActionLoading ? t("starting")
+                    : isManagedBotRoom ? t("playAgain")
+                      : isPreviousRoundSpectator ? t("play") : t("agreeAndPlay")}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {rematchRemovalNotice && (
+        <div style={styles.gameOverOverlay}>
+          <div style={styles.gameOverPopup}>
+            <h3 style={{ ...styles.gameOverTitle, color: "#ff6b6b" }}>
+              {t("rematchRemovedTitle")}
+            </h3>
+            <p>{rematchRemovalNotice === "no-response"
+              ? t("rematchRemovedNoResponse")
+              : rematchRemovalNotice === "insufficient-balance"
+                ? t("rematchRemovedBalance")
+                : t("rematchLeftMessage")}</p>
+            <button
+              style={styles.btnWin}
+              onClick={() => navigate("/second", { replace: true })}
+            >
+              {t("goToLobby")}
+            </button>
           </div>
         </div>
       )}
@@ -2327,16 +3105,20 @@ function GamePage() {
       <div style={styles.playerArea}>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
           <img
-            src={user?.photo || "https://cdn-icons-png.flaticon.com/512/149/149071.png"}
+            src={getPlayerPhoto(user?.telegramId)}
             alt={t("you")}
             style={{
               ...styles.avatar(isMyTurn),
               width: "clamp(50px, 9vw, 65px)",
               height: "clamp(50px, 9vw, 65px)",
             }}
+            onError={(event) => {
+              event.currentTarget.onerror = null;
+              event.currentTarget.src = DEFAULT_PROFILE_PHOTO;
+            }}
           />
           <div style={styles.playerName(isMyTurn)}>
-            {user ? ((user.username ? `@${user.username}` : "") || user.displayName || user.firstName || t("you")) : t("you")}
+            {getDisplayName(user, t("you"))}
           </div>
           {isMyTurn && (
             <div style={styles.turnLoader}>

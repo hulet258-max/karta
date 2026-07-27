@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState, useEffect } from "react";
-import { ArrowLeft, Bot, Settings, Trash2, UserCircle, Users, Volume2, VolumeX, X } from "lucide-react";
+import { ArrowLeft, Bot, ExternalLink, Settings, Trash2, UserCircle, Users, Volume2, VolumeX, X } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useSettings } from "./contexts/SettingsContext";
 import { useUser } from "./contexts/UserContext";
@@ -23,12 +23,49 @@ function SecondPage() {
   const [botStarting, setBotStarting] = useState(false);
   const isPrivateShareLaunch = new URLSearchParams(location.search).get("privateShare") === "1";
 
+  // Sized for lobby carousel (~full width × 158px, object-fit cover).
+  // Assets: 1194×474 (~2.52:1) matches display box (max ~398×158).
   const fallbackSlides = useMemo(() => [
-    { image: "/a.png", alt: t("kartaBannerAlt", { number: 1 }) },
-    { image: "/b.png", alt: t("kartaBannerAlt", { number: 2 }) },
-    { image: "/c.png", alt: t("kartaBannerAlt", { number: 3 }) },
-  ], [t]);
+    {
+      image: "/lobby-tiktok-cartagame.jpg",
+      alt: "Carta on TikTok @cartagame",
+      platform: "TikTok",
+      title: "@cartagame",
+      detail: "tiktok.com/@cartagame",
+      href: "https://www.tiktok.com/@cartagame",
+    },
+    {
+      image: "/lobby-instagram-carta_game.jpg",
+      alt: "Carta on Instagram @carta_game",
+      platform: "Instagram",
+      title: "@carta_game",
+      detail: "instagram.com/carta_game",
+      href: "https://www.instagram.com/carta_game",
+    },
+    {
+      image: "/lobby-facebook-carta.jpg",
+      alt: "Carta on Facebook",
+      platform: "Facebook",
+      title: "Carta",
+      detail: "Search Carta",
+      href: "https://www.facebook.com/search/top?q=carta",
+    },
+  ], []);
   const slides = posterSlides.length ? posterSlides : fallbackSlides;
+
+  const openBannerLink = useCallback((href) => {
+    if (!href) return;
+    try {
+      const tg = window.Telegram?.WebApp;
+      if (tg?.openLink) {
+        tg.openLink(href);
+        return;
+      }
+    } catch (_) {
+      /* fall through */
+    }
+    window.open(href, "_blank", "noopener,noreferrer");
+  }, []);
 
   const formatRoomType = (roomType) => {
     const match = String(roomType || "").match(/^(\d+)-players$/);
@@ -83,7 +120,12 @@ function SecondPage() {
         const activePosters = (data.posters || [])
           .map((poster, index) => ({
             image: poster.imageUrl,
-            alt: poster.title || t("kartaBannerAlt", { number: index + 1 }),
+            alt: poster.altText || poster.title || t("kartaBannerAlt", { number: index + 1 }),
+            platform: poster.platform || "",
+            title: poster.title || "",
+            detail: poster.detail || "",
+            href: poster.targetUrl || "",
+            showOverlay: poster.showOverlay !== false,
           }))
           .filter((poster) => poster.image);
 
@@ -465,11 +507,62 @@ function SecondPage() {
       height: "100%",
       position: "relative",
     },
+    slideLink: {
+      display: "block",
+      width: "100%",
+      height: "100%",
+      color: "inherit",
+      textDecoration: "none",
+      position: "relative",
+    },
     slideImage: {
       width: "100%",
       height: "100%",
       objectFit: "cover",
       display: "block",
+    },
+    slideScrim: {
+      position: "absolute",
+      inset: 0,
+      background: "linear-gradient(90deg, rgba(2,10,12,0.82) 0%, rgba(2,10,12,0.48) 30%, rgba(2,10,12,0.08) 58%, transparent 74%), linear-gradient(0deg, rgba(2,8,8,0.38) 0%, transparent 42%)",
+    },
+    // Edge-blended copy keeps the banner readable without placing it in a box.
+    slideContent: {
+      position: "absolute",
+      left: "18px",
+      bottom: "25px",
+      maxWidth: "48%",
+      zIndex: 2,
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "flex-start",
+      gap: "3px",
+      pointerEvents: "none",
+      textShadow: "0 2px 10px rgba(0,0,0,0.88)",
+    },
+    slidePlatform: {
+      color: colors.gold,
+      fontSize: "7px",
+      lineHeight: 1.15,
+      fontWeight: 800,
+      letterSpacing: "0.16em",
+      textTransform: "uppercase",
+    },
+    slideTitle: {
+      color: "#fff",
+      fontSize: "clamp(13px, 3.8vw, 18px)",
+      lineHeight: 1.1,
+      fontWeight: 850,
+      letterSpacing: "-0.02em",
+    },
+    slideDetail: {
+      display: "inline-flex",
+      alignItems: "center",
+      gap: "3px",
+      color: "rgba(255,255,255,0.74)",
+      fontSize: "clamp(8px, 2.1vw, 10px)",
+      lineHeight: 1.15,
+      fontWeight: 600,
     },
     slideDots: {
       position: "absolute",
@@ -786,6 +879,21 @@ function SecondPage() {
       </div>
 
       <div style={styles.contentWrapper}>
+        {location.state?.rematchNotice === "not-all-players-agreed" && (
+          <div role="alert" style={{
+            marginBottom: "12px",
+            padding: "12px 14px",
+            borderRadius: "10px",
+            border: "2px solid #ff5a5a",
+            background: "rgba(151, 20, 20, 0.9)",
+            color: "#fff",
+            fontWeight: 900,
+            textAlign: "center",
+            boxShadow: "0 0 22px rgba(255, 62, 62, 0.45)",
+          }}>
+            {t("rematchReturnedToLobby")}
+          </div>
+        )}
         <header style={styles.topBar}>
           <button style={styles.iconBtn} onClick={() => navigate("/", { replace: true })} aria-label={t("back")} title={t("back")}>
             <ArrowLeft size={19} />
@@ -808,11 +916,52 @@ function SecondPage() {
         <section style={styles.carousel}>
           <div style={styles.carouselGlow}></div>
           <div style={styles.carouselTrack}>
-            {slides.map((slide, index) => (
-              <div style={styles.slide} key={`${slide.image}-${index}`}>
-                <img src={slide.image} alt={slide.alt} style={styles.slideImage} />
-              </div>
-            ))}
+            {slides.map((slide, index) => {
+              const hasLink = Boolean(slide.href);
+              const showOverlay = slide.showOverlay !== false
+                && (slide.platform || slide.title || slide.detail);
+              const overlay = showOverlay ? (
+                <>
+                  <div style={styles.slideScrim} />
+                  <div style={styles.slideContent}>
+                    {slide.platform ? <span style={styles.slidePlatform}>{slide.platform}</span> : null}
+                    {slide.title ? <strong style={styles.slideTitle}>{slide.title}</strong> : null}
+                    {slide.detail ? (
+                      <span style={styles.slideDetail}>
+                        {slide.detail}
+                        {hasLink ? <ExternalLink size={7} aria-hidden="true" /> : null}
+                      </span>
+                    ) : null}
+                  </div>
+                </>
+              ) : null;
+
+              return (
+                <div style={styles.slide} key={`${slide.image}-${index}`}>
+                  {hasLink ? (
+                    <a
+                      href={slide.href}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label={[slide.platform, slide.title, slide.detail].filter(Boolean).join(" ")}
+                      style={styles.slideLink}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        openBannerLink(slide.href);
+                      }}
+                    >
+                      <img src={slide.image} alt={slide.alt || slide.title || "Banner"} style={styles.slideImage} />
+                      {overlay}
+                    </a>
+                  ) : (
+                    <div style={styles.slideLink}>
+                      <img src={slide.image} alt={slide.alt || slide.title || "Banner"} style={styles.slideImage} />
+                      {overlay}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
           <div style={styles.slideDots}>
             {slides.map((slide, index) => (
