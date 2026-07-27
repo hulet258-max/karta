@@ -8,6 +8,13 @@ import { socket } from "./socket";
 import { formatBirr } from "./utils/money";
 import CoinAmount from "./CoinAmount";
 import { getDisplayName } from "./utils/displayName";
+import { playGameSound } from "./audioManager";
+import {
+  findAddedCard,
+  optimisticallyLayCard,
+  optimisticallyPickLaidCard,
+  serverStateConfirmsAction,
+} from "./optimisticGameState";
 
 const rankOrder = ["A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2"];
 const PAGE_TOP_PADDING = "80px";
@@ -118,7 +125,6 @@ function GamePage() {
   const prevTurnRef = useRef(location.state?.redisData?.turn || null);
   const prevWaitingRef = useRef(false);
   const prevLedgerKeyRef = useRef("");
-  const audioRefs = useRef({});
   const [flyingCard, setFlyingCard] = useState(null);
   const [isDealing, setIsDealing] = useState(false);
   
@@ -135,6 +141,7 @@ function GamePage() {
   const [rematchRemovalNotice, setRematchRemovalNotice] = useState(null);
   const [rematchFeeDraft, setRematchFeeDraft] = useState("");
   const [pickedCardDecision, setPickedCardDecision] = useState(null);
+  const [pendingGameplayAction, setPendingGameplayAction] = useState(null);
   const [opponentPickIndicator, setOpponentPickIndicator] = useState(null);
   const [showGameRules, setShowGameRules] = useState(false);
   const [callCooldownUntil, setCallCooldownUntil] = useState(0);
@@ -144,6 +151,49 @@ function GamePage() {
   const laidHistoryRef = useRef(null);
   const isLeavingRef = useRef(false);
   const notificationTimerRef = useRef(null);
+  const pendingGameplayActionRef = useRef(null);
+
+  const revealPickedCard = useCallback((card) => {
+    if (!card) return;
+    setPickedCardDecision({ card, revealed: false });
+    requestAnimationFrame(() => {
+      setPickedCardDecision((current) => current ? { ...current, revealed: true } : current);
+    });
+  }, []);
+
+  const settleGameplayTransaction = useCallback((transaction, authoritativeState, pickedCard = null) => {
+    if (!transaction || transaction.settled) return;
+    transaction.settled = true;
+
+    if (authoritativeState) setGameState(authoritativeState);
+    if (pendingGameplayActionRef.current === transaction) {
+      pendingGameplayActionRef.current = null;
+      setPendingGameplayAction(null);
+    }
+
+    if (transaction.kind === "deck-pick") {
+      const userId = String(transaction.userId);
+      const confirmedCard = pickedCard || findAddedCard(
+        transaction.snapshot?.playerCards?.[userId] || [],
+        authoritativeState?.playerCards?.[userId] || []
+      );
+      revealPickedCard(confirmedCard);
+    }
+  }, [revealPickedCard]);
+
+  const cancelGameplayTransaction = useCallback((transaction, restoredState = null) => {
+    if (!transaction || transaction.settled) return;
+    transaction.settled = true;
+    setGameState(restoredState || transaction.snapshot);
+
+    if (pendingGameplayActionRef.current === transaction) {
+      pendingGameplayActionRef.current = null;
+      setPendingGameplayAction(null);
+    }
+    if (transaction.decisionCard) {
+      setPickedCardDecision({ card: transaction.decisionCard, revealed: true });
+    }
+  }, []);
 
   useEffect(() => {
     if (room || !routeRoomId || !user?.telegramId) return;
@@ -264,14 +314,26 @@ function GamePage() {
       }
       setRoom(data.room);
       setPlayers(data.players);
-      setGameState(data.redisData);
+
+      const pending = pendingGameplayActionRef.current;
+      if (!pending) {
+        setGameState(data.redisData);
+      } else if (serverStateConfirmsAction(pending, data.redisData, pending.userId)) {
+        settleGameplayTransaction(pending, data.redisData);
+      } else if (
+        data.redisData?.gameEnded ||
+        data.redisData?.paused ||
+        data.redisData?.status !== "playing"
+      ) {
+        cancelGameplayTransaction(pending, data.redisData);
+      }
     };
     socket.on("room_update", handleRoomUpdate);
 
     return () => {
       socket.off("room_update", handleRoomUpdate);
     };
-  }, []); 
+  }, [cancelGameplayTransaction, settleGameplayTransaction]);
 
   useEffect(() => {
     if (!room) return undefined;
@@ -454,26 +516,7 @@ function GamePage() {
 
   const playSound = useCallback((name) => {
     if (!settings.sound) return;
-
-    const sources = {
-      turn: "/1.mp3",
-      waiting: "/2.mp3",
-      deal: "/3.mp3",
-      call: "/call.mp3",
-    };
-    const source = sources[name] || sources.deal;
-
-    try {
-      if (!audioRefs.current[name]) {
-        audioRefs.current[name] = new Audio(source);
-      }
-
-      const audio = audioRefs.current[name];
-      audio.currentTime = 0;
-      audio.play().catch(() => {});
-    } catch (error) {
-      console.warn("Could not play sound:", error);
-    }
+    playGameSound(name);
   }, [settings.sound]);
 
   // Get actual cards for the logged-in user
@@ -571,10 +614,11 @@ function GamePage() {
 
   // ✨ GAME RULES LOGIC
   const isMyTurn = user && String(turn) === String(user.telegramId);
-  const canPick = !gameEnded && !gamePaused && isMyTurn && myCards.length === 10;
-  const canLay = !gameEnded && !gamePaused && isMyTurn && myCards.length === 11;
+  const canPick = !pendingGameplayAction && !gameEnded && !gamePaused && isMyTurn && myCards.length === 10;
+  const canLay = !pendingGameplayAction && !gameEnded && !gamePaused && isMyTurn && myCards.length === 11;
   const winAnalysis = analyzeWinningHand(myCards);
   const canDeclareWin =
+    !pendingGameplayAction &&
     !gameEnded &&
     !gamePaused &&
     isMyTurn &&
@@ -738,18 +782,21 @@ function GamePage() {
 
   // Click Handlers
   const handleCardClick = (index) => {
+    if (pendingGameplayActionRef.current) return;
     setSelectedHandIndex(index === selectedHandIndex ? null : index);
     setDeckSelected(false);
     setLaidSelected(false);
   };
 
   const handleDeckClick = () => {
+    if (pendingGameplayActionRef.current) return;
     setDeckSelected(!deckSelected);
     setSelectedHandIndex(null);
     setLaidSelected(false);
   };
 
   const handleLaidClick = () => {
+    if (pendingGameplayActionRef.current) return;
     if (laidCards.length === 0) return; // Ignore if empty
     if (isJoker(laidCards[laidCards.length - 1])) return;
     setLaidSelected(!laidSelected);
@@ -759,94 +806,119 @@ function GamePage() {
 
   // Action Handler connected to Backend Endpoints
   const handleAction = async (e, action, target, cardData = null) => {
-    e.stopPropagation();
+    e?.stopPropagation?.();
+    if (pendingGameplayActionRef.current) return false;
     
     // Safety check before hitting the API
-    if (action === "Pick" && !canPick) return showError(t("alreadyPicked"));
-    if (action === "Pick" && target === "Laid Card" && isJoker(laidCards[laidCards.length - 1])) {
-      return showError(t("jokerPickBlocked"));
+    if (action === "Pick" && !canPick) {
+      showError(t("alreadyPicked"));
+      return false;
     }
-    if (action === "Lay" && !canLay) return showError(t("mustPickFirst"));
+    if (action === "Pick" && target === "Laid Card" && isJoker(laidCards[laidCards.length - 1])) {
+      showError(t("jokerPickBlocked"));
+      return false;
+    }
+    if (action === "Lay" && !canLay) {
+      showError(t("mustPickFirst"));
+      return false;
+    }
 
     const payload = {
       userId: user.telegramId,
       roomId: room.id || room.roomId || room.name,
-      // ✨ Add socketId to ensure server has the latest for emitting updates
       socketId: socket.id
     };
+    let endpoint = "";
+    let kind = "";
 
-    try {
-      let endpoint = "";
-      if (action === "Pick" && target === "Deck") {
-        endpoint = "/gameplay/take-card";
-      } else if (action === "Pick" && target === "Laid Card") {
-        endpoint = "/gameplay/pick-card";
-      } else if (action === "Lay") {
-        endpoint = "/gameplay/lay-card";
-        payload.card = cardData;
-      }
-
-      if (endpoint) {
-        const response = await fetch(`${BASE_URL}${endpoint}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-        
-        const data = await response.json();
-        
-        // Handle backend errors (like out of turn, etc)
-        if (!response.ok || data.error) {
-          if (data.redisData) {
-            setGameState(data.redisData);
-            if (Array.isArray(data.redisData.players)) {
-              setPlayers(data.redisData.players);
-            }
-          }
-          showError(data.error || t("actionFailed"));
-          console.error(`❌ Server error from ${endpoint}:`, data);
-        } else {
-          if (DEBUG_GAME_EVENTS) {
-            console.log(`Server response from ${endpoint}:`, data);
-          }
-
-          // Trigger flying card animation on successful pick/lay actions
-          if (action === "Pick" && target === "Deck" && data.pickedCard) {
-            setPickedCardDecision({ card: data.pickedCard, revealed: false });
-            requestAnimationFrame(() => {
-              setPickedCardDecision((current) => current ? { ...current, revealed: true } : current);
-            });
-          } else if (action === "Pick" && target === "Laid Card") {
-            if (topLaidCard) {
-              setFlyingCard({
-                type: "deckToHand",
-                variant: "face",
-                card: topLaidCard,
-                animate: false,
-              });
-            }
-          } else if (action === "Lay" && cardData) {
-            setFlyingCard({
-              type: "handToLaid",
-              variant: "face",
-              card: cardData,
-              animate: false,
-            });
-          }
-        }
-      }
-    } catch (error) {
-      showError(t("networkError"));
-      console.error("❌ Error performing action:", error);
+    if (action === "Pick" && target === "Deck") {
+      endpoint = "/gameplay/take-card";
+      kind = "deck-pick";
+    } else if (action === "Pick" && target === "Laid Card") {
+      endpoint = "/gameplay/pick-card";
+      kind = "laid-pick";
+    } else if (action === "Lay") {
+      endpoint = "/gameplay/lay-card";
+      kind = "lay";
+      payload.card = cardData;
     }
-    
-    // Reset selections after action
+    if (!endpoint) return false;
+
+    const transaction = {
+      id: `${Date.now()}-${Math.random()}`,
+      kind,
+      userId: String(user.telegramId),
+      card: cardData,
+      decisionCard: kind === "lay" && pickedCardDecision?.card === cardData
+        ? pickedCardDecision.card
+        : null,
+      snapshot: gameState,
+      settled: false,
+    };
+    pendingGameplayActionRef.current = transaction;
+    setPendingGameplayAction({ id: transaction.id, kind });
+
+    if (kind === "deck-pick") {
+      setFlyingCard({
+        type: "deckToHand",
+        variant: "back",
+        card: null,
+        animate: false,
+      });
+    } else if (kind === "laid-pick") {
+      const optimisticCard = laidCards[laidCards.length - 1];
+      setGameState((current) => optimisticallyPickLaidCard(current, user.telegramId));
+      setFlyingCard({
+        type: "deckToHand",
+        variant: "face",
+        card: optimisticCard,
+        animate: false,
+      });
+    } else {
+      setGameState((current) => optimisticallyLayCard(current, user.telegramId, cardData, players));
+      setFlyingCard({
+        type: "handToLaid",
+        variant: "face",
+        card: cardData,
+        animate: false,
+      });
+      setPickedCardDecision(null);
+      setHighlightedCardKey(null);
+    }
+
     setSelectedHandIndex(null);
     setDeckSelected(false);
     setLaidSelected(false);
-    if (action === "Lay") {
-      // After laying a card, remove highlight from the previously picked card
-      setHighlightedCardKey(null);
+
+    try {
+      const response = await fetch(`${BASE_URL}${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+
+      if (transaction.settled) {
+        if (data.redisData) setGameState(data.redisData);
+        return true;
+      }
+      if (!response.ok || data.error) {
+        cancelGameplayTransaction(transaction, data.redisData || transaction.snapshot);
+        showError(data.error || t("actionFailed"));
+        console.error(`Server error from ${endpoint}:`, data);
+        return false;
+      }
+
+      if (data.redisData) setGameState(data.redisData);
+      settleGameplayTransaction(transaction, data.redisData, data.pickedCard);
+      return true;
+    } catch (error) {
+      if (transaction.settled) return true;
+      cancelGameplayTransaction(transaction);
+      syncGameState();
+      showError(t("networkError"));
+      console.error("Error performing action:", error);
+      return false;
     }
   };
 
@@ -1015,11 +1087,7 @@ function GamePage() {
   const handleLayPickedCard = async () => {
     const card = pickedCardDecision?.card;
     if (!card) return;
-    const result = await postGameplayAction("/gameplay/lay-card", { card });
-    if (result) {
-      setPickedCardDecision(null);
-      setHighlightedCardKey(null);
-    }
+    await handleAction(null, "Lay", "Hand", card);
   };
 
   const topLaidCard = laidCards.length > 0 ? laidCards[laidCards.length - 1] : null;
@@ -2467,6 +2535,29 @@ function GamePage() {
 
       {/* Center Table (Deck & Discard Pile) */}
       <div style={styles.centerArea}>
+        {pendingGameplayAction && (
+          <span
+            role="status"
+            aria-live="polite"
+            style={{
+              position: "absolute",
+              top: "calc(100% + 13px)",
+              left: "50%",
+              transform: "translateX(-50%)",
+              whiteSpace: "nowrap",
+              padding: "4px 9px",
+              borderRadius: "999px",
+              background: "rgba(8, 35, 22, 0.9)",
+              border: `1px solid ${colors.gold}`,
+              color: colors.cream,
+              fontSize: "0.68rem",
+              fontWeight: 800,
+              boxShadow: "0 3px 12px rgba(0,0,0,0.35)",
+            }}
+          >
+            {t("syncingAction")}
+          </span>
+        )}
         {/* The remaining deck */}
         <div style={styles.pickGlow(opponentPickIndicator === "deck")} onClick={handleDeckClick}>
           <div style={styles.deckCard}></div>
