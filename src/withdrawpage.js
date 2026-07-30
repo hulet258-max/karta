@@ -5,6 +5,7 @@ import { useSettings } from "./contexts/SettingsContext";
 import { useUser } from "./contexts/UserContext";
 import CoinAmount from "./CoinAmount";
 import { formatBirr, isWholeBirrUnit } from "./utils/money";
+import { getDailyWithdrawalLimit } from "./utils/withdrawalLimits";
 
 const MIN_WITHDRAWAL_GAMES = 6;
 const MIN_WITHDRAWAL_PLAY_DAYS = 3;
@@ -24,13 +25,19 @@ function WithdrawPage() {
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState(null);
   const [withdrawalsEnabled, setWithdrawalsEnabled] = useState(true);
+  const [gamesPlayed, setGamesPlayed] = useState(0);
+  const [dailyLimit, setDailyLimit] = useState(50);
   const requestIdRef = useRef("");
 
   const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000/api";
   const minWithdraw = MIN_WITHDRAW_BIRR;
   const maxWithdraw = Math.max(
     0,
-    Math.min(withdrawableBalance, balance - MIN_REMAINING_BALANCE_BIRR)
+    Math.min(
+      withdrawableBalance,
+      balance - MIN_REMAINING_BALANCE_BIRR,
+      dailyLimit === null ? Infinity : dailyLimit
+    )
   );
   const minWithdrawBirr = minWithdraw;
   const telegramId = user?.telegramId || user?.id;
@@ -71,6 +78,24 @@ function WithdrawPage() {
       .catch((error) => {
         console.error("Failed to refresh balance:", error);
       });
+  }, [API_BASE_URL, telegramId]);
+
+  useEffect(() => {
+    if (!telegramId) return;
+
+    fetch(`${API_BASE_URL}/user-profile/${encodeURIComponent(telegramId)}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (!data?.success) return;
+        const completedGames = Number(data.profile?.gameStats?.gamesPlayed || 0);
+        setGamesPlayed(completedGames);
+        setDailyLimit(
+          data.profile?.withdrawalPolicy
+            ? data.profile.withdrawalPolicy.dailyLimitBirr
+            : getDailyWithdrawalLimit(completedGames)
+        );
+      })
+      .catch((error) => console.error("Failed to load withdrawal tier:", error));
   }, [API_BASE_URL, telegramId]);
 
   useEffect(() => {
@@ -125,6 +150,14 @@ function WithdrawPage() {
       return;
     }
 
+    if (dailyLimit !== null && parsedAmount > dailyLimit) {
+      setResult({
+        type: "error",
+        text: t("withdrawDailyLimitError", { amount: formatBirr(dailyLimit) }),
+      });
+      return;
+    }
+
     try {
       setSubmitting(true);
       if (!requestIdRef.current) {
@@ -165,7 +198,9 @@ function WithdrawPage() {
           }));
         }
         if (data.code === "WITHDRAWAL_DAILY_LIMIT_EXCEEDED") {
-          throw new Error(t("withdrawDailyLimitError"));
+          throw new Error(t("withdrawDailyLimitError", {
+            amount: formatBirr(data.dailyLimit ?? dailyLimit),
+          }));
         }
         throw new Error(data.error || t("withdrawFailed"));
       }
@@ -173,6 +208,9 @@ function WithdrawPage() {
       setBalance(Number(data.newBalance || 0));
       setWithdrawableBalance(Number(data.newWithdrawableBalance ?? data.limits?.maxWithdraw ?? 0));
       setLockedGiftBalance(Number(data.nonWithdrawableBalance || 0));
+      if (Object.prototype.hasOwnProperty.call(data.limits || {}, "dailyLimit")) {
+        setDailyLimit(data.limits.dailyLimit);
+      }
       setPhone(data.phone || phoneNumber);
       await refreshUser?.();
       setAmount("");
@@ -324,6 +362,12 @@ function WithdrawPage() {
           <h3 style={styles.statValue}><CoinAmount value={balance} size={22} /></h3>
           <p style={styles.infoText}>{t("minWithdraw")}: <CoinAmount value={minWithdraw} /></p>
           <p style={styles.infoText}>{t("maxWithdraw")}: <CoinAmount value={maxWithdraw} /></p>
+          <p style={styles.infoText}>{t("gamesPlayed")}: {gamesPlayed}</p>
+          <p style={styles.infoText}>
+            {t("dailyWithdrawalLimit")}: {dailyLimit === null
+              ? t("unlimited")
+              : <CoinAmount value={dailyLimit} />}
+          </p>
           <p style={styles.infoText}>{t("withdrawReserveRule", { amount: formatBirr(MIN_REMAINING_BALANCE_BIRR) })}</p>
           {lockedGiftBalance > 0 && (
             <p style={styles.infoText}>{t("lockedGiftBalance")}: <CoinAmount value={lockedGiftBalance} /></p>

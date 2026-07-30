@@ -188,7 +188,8 @@ function DepositPage() {
 
   const styles = {
     page: {
-      minHeight: "100dvh",
+      height: "100dvh",
+      minHeight: 0,
       width: "100%",
       display: "flex",
       justifyContent: "center",
@@ -198,6 +199,7 @@ function DepositPage() {
       backgroundSize: "auto, 42px 42px, 42px 42px, auto",
       padding: "96px 18px 18px",
       boxSizing: "border-box",
+      overflow: "hidden",
       color: colors.cream,
       fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
     },
@@ -211,6 +213,8 @@ function DepositPage() {
       boxSizing: "border-box",
       minWidth: 0,
       overflowWrap: "anywhere",
+      maxHeight: "calc(100dvh - 114px)",
+      overflow: "hidden",
     },
     title: {
       margin: "0 0 10px 0",
@@ -257,7 +261,7 @@ function DepositPage() {
     },
     paymentMethodButton: {
       minWidth: 0,
-      borderRadius: "18px",
+      borderRadius: "10px",
       border: "1px solid rgba(255,255,255,0.18)",
       background: "rgba(255,255,255,0.08)",
       color: colors.cream,
@@ -335,13 +339,11 @@ function DepositPage() {
     },
     textarea: {
       width: "100%",
-      minHeight: "110px",
-      resize: "vertical",
+      minHeight: "76px",
+      resize: "none",
       borderRadius: "10px",
-      background: "#ffffff",
-      border: "1px solid rgba(255,255,255,0.85)",
-      boxShadow: "0 8px 18px rgba(0,0,0,0.12), inset 0 1px 0 rgba(255,255,255,0.8)",
-      color: colors.textDark,
+      ...ui.textField,
+      color: colors.text,
       padding: "12px",
       boxSizing: "border-box",
       outline: "none",
@@ -387,7 +389,7 @@ function DepositPage() {
       fontSize: "0.82rem",
       opacity: 1,
       textAlign: "center",
-      color: "#000000",
+      color: colors.cream,
     },
     fileName: {
       marginBottom: "10px",
@@ -438,7 +440,7 @@ function DepositPage() {
     },
     backButton: {
       ...ui.secondaryButton,
-      color: "#000000",
+      color: colors.cream,
       fontWeight: 600,
     },
     submitButton: {
@@ -533,9 +535,9 @@ function DepositPage() {
   const isDepositSuccess = result?.type === "success";
 
   return (
-    <div className="money-page" style={styles.page}>
-      <div className="money-card" style={styles.card}>
-        <h2 style={styles.title}><Wallet size={22} style={{ verticalAlign: "-4px", marginRight: "8px" }} />{t("deposit")}</h2>
+    <div className="money-page deposit-page" style={styles.page}>
+      <div className="money-card deposit-card" style={styles.card}>
+        <h2 className="deposit-title" style={styles.title}><Wallet size={22} style={{ verticalAlign: "-4px", marginRight: "8px" }} />{t("deposit")}</h2>
 
         {isDepositSuccess ? (
           <div style={styles.successView}>
@@ -549,18 +551,19 @@ function DepositPage() {
           </div>
         ) : (
           <>
-            <ol style={styles.depositSteps}>
+            <ol className="deposit-steps" style={styles.depositSteps}>
               <li>{t("depositStepPay")}</li>
               <li>{t("depositStepReceipt")}</li>
               <li>{t("depositStepConfirm")}</li>
             </ol>
-            <div style={styles.paymentMethodCard}>
-              <p style={styles.paymentMethodTitle}>{t("selectPaymentMethod")}</p>
+            <div className="deposit-payment-card" style={styles.paymentMethodCard}>
+              <p className="deposit-method-title" style={styles.paymentMethodTitle}>{t("selectPaymentMethod")}</p>
               <div style={styles.paymentMethodList}>
                 {PAYMENT_METHODS.map((method) => (
                   <button
                     key={method.id}
                     type="button"
+                    className="deposit-method-button"
                     style={{
                       ...styles.paymentMethodButton,
                       ...(selectedPaymentMethod === method.id ? styles.paymentMethodButtonActive : {}),
@@ -572,6 +575,7 @@ function DepositPage() {
                     <img
                       src={method.image}
                       alt={method.name}
+                      className="deposit-payment-logo"
                       style={styles.paymentLogo}
                       onError={(event) => {
                         event.currentTarget.style.display = "none";
@@ -585,10 +589,10 @@ function DepositPage() {
 
             {selectedPayment && (
               <>
-                <p style={styles.text}>{t("payAmountWithFollowingNumber", { method: selectedPayment.name })}</p>
-                <div style={styles.payNumberList}>
+                <p className="deposit-pay-copy" style={styles.text}>{t("payAmountWithFollowingNumber", { method: selectedPayment.name })}</p>
+                <div className="deposit-number-list" style={styles.payNumberList}>
                   {payNumbers.map((number) => (
-                    <div style={styles.payNumberItem} key={number.id || number.phoneNumber}>
+                    <div className="deposit-number" style={styles.payNumberItem} key={number.id || number.phoneNumber}>
                       {number.phoneNumber}
                     </div>
                   ))}
@@ -596,10 +600,10 @@ function DepositPage() {
               </>
             )}
 
-        <form onSubmit={handleSubmit}>
+        <form className="deposit-form" onSubmit={handleSubmit}>
           <fieldset style={styles.formFieldset} disabled={submitting}>
             <label style={styles.label}>{t("receiptInputType")}</label>
-            <div style={styles.modeRow}>
+            <div className="deposit-mode-row" style={styles.modeRow}>
               <button
                 type="button"
                 style={{
@@ -628,7 +632,8 @@ function DepositPage() {
               <>
                 <label style={styles.label}>{t("pasteReceiptHere")}</label>
                 <textarea
-                  style={styles.textarea}
+                className="deposit-textarea"
+                style={styles.textarea}
                   placeholder={t("receiptPlaceholder")}
                   value={messageOrLink}
                   onChange={(e) => setMessageOrLink(e.target.value)}
@@ -637,7 +642,7 @@ function DepositPage() {
             ) : (
               <>
                 <label style={styles.label}>{t("uploadPaymentScreenshot")}</label>
-                <div style={styles.screenshotCard}>
+                <div className="deposit-screenshot-card" style={styles.screenshotCard}>
                   <input
                     id="screenshotUpload"
                     style={styles.fileInputHidden}
@@ -646,7 +651,7 @@ function DepositPage() {
                     onChange={handleScreenshotChange}
                     disabled={submitting}
                   />
-                  <label htmlFor="screenshotUpload" style={styles.screenshotPickerButton}>
+                  <label className="deposit-screenshot-picker" htmlFor="screenshotUpload" style={styles.screenshotPickerButton}>
                     <ImagePlus size={16} />
                     {screenshotFile ? t("chooseDifferentScreenshot") : t("chooseScreenshotImage")}
                   </label>
@@ -657,7 +662,7 @@ function DepositPage() {
                     </div>
                   )}
                   {screenshotPreviewUrl && (
-                    <div style={styles.screenshotPreviewWrap}>
+                    <div className="deposit-preview" style={styles.screenshotPreviewWrap}>
                       <img
                         src={screenshotPreviewUrl}
                         alt={t("screenshotPreviewAlt")}
@@ -669,7 +674,7 @@ function DepositPage() {
               </>
             )}
 
-            <label style={styles.checkboxRow}>
+            <label className="deposit-checkbox" style={styles.checkboxRow}>
               <input
                 type="checkbox"
                 checked={confirmPaid}
@@ -699,6 +704,7 @@ function DepositPage() {
 
         {result && (
           <div
+            className="deposit-result"
             style={{
               ...styles.result,
               background: result.type === "success" ? "rgba(46, 125, 50, 0.3)" : "rgba(198, 40, 40, 0.3)",
