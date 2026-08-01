@@ -35,7 +35,6 @@ function DepositPage() {
   const [messageOrLink, setMessageOrLink] = useState("");
   const [screenshotFile, setScreenshotFile] = useState(null);
   const [screenshotPreviewUrl, setScreenshotPreviewUrl] = useState("");
-  const [confirmPaid, setConfirmPaid] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState(null);
 
@@ -94,7 +93,6 @@ function DepositPage() {
       },
       body: JSON.stringify({
         receiptTextOrLink: String(receiptValue).trim(),
-        confirmedByUser: confirmPaid,
         socketId: socket.id,
         userId: user?.telegramId || user?.id,
       }),
@@ -127,11 +125,6 @@ function DepositPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-
-    if (!confirmPaid) {
-      setResult({ type: "error", text: t("confirmPaymentError") });
-      return;
-    }
 
     if (!selectedPaymentMethod) {
       setResult({ type: "error", text: t("paymentMethodRequired") });
@@ -175,7 +168,6 @@ function DepositPage() {
       setMessageOrLink("");
       setScreenshotFile(null);
       setScreenshotPreviewUrl("");
-      setConfirmPaid(false);
       setSelectedPaymentMethod(PAYMENT_METHODS[0]?.id || "");
     } catch (error) {
       setResult({ type: "error", text: error.message || t("backendFailed") });
@@ -188,8 +180,7 @@ function DepositPage() {
 
   const styles = {
     page: {
-      height: "100dvh",
-      minHeight: 0,
+      minHeight: "100dvh",
       width: "100%",
       display: "flex",
       justifyContent: "center",
@@ -199,7 +190,8 @@ function DepositPage() {
       backgroundSize: "auto, 42px 42px, 42px 42px, auto",
       padding: "96px 18px 18px",
       boxSizing: "border-box",
-      overflow: "hidden",
+      overflowX: "hidden",
+      overflowY: "auto",
       color: colors.cream,
       fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
     },
@@ -213,8 +205,7 @@ function DepositPage() {
       boxSizing: "border-box",
       minWidth: 0,
       overflowWrap: "anywhere",
-      maxHeight: "calc(100dvh - 114px)",
-      overflow: "hidden",
+      overflow: "visible",
     },
     title: {
       margin: "0 0 10px 0",
@@ -411,14 +402,6 @@ function DepositPage() {
       objectFit: "contain",
       display: "block",
       background: "rgba(0,0,0,0.6)",
-    },
-    checkboxRow: {
-      display: "flex",
-      alignItems: "center",
-      gap: "8px",
-      marginBottom: "14px",
-      fontSize: "0.9rem",
-      color: colors.cream,
     },
     actions: {
       display: "flex",
@@ -673,15 +656,6 @@ function DepositPage() {
                 </div>
               </>
             )}
-
-            <label className="deposit-checkbox" style={styles.checkboxRow}>
-              <input
-                type="checkbox"
-                checked={confirmPaid}
-                onChange={(e) => setConfirmPaid(e.target.checked)}
-              />
-              {t("confirmPayment")}
-            </label>
 
             <div className="money-actions" style={styles.actions}>
               <button

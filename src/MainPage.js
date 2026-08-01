@@ -10,7 +10,6 @@ import ShareToast from "./ShareToast";
 import TinySpinner from "./TinySpinner";
 import { sharePreparedTelegramMessage, switchTelegramInlineQuery } from "./utils/telegramShare";
 import { getDisplayName } from "./utils/displayName";
-import { getDailyWithdrawalLimit } from "./utils/withdrawalLimits";
 
 const DEFAULT_PROFILE_PHOTO = "https://cdn-icons-png.flaticon.com/512/149/149071.png";
 
@@ -29,9 +28,6 @@ function MainPage() {
   const profileButtonName = getDisplayName(user, t("user"));
   const API_BASE_URL = process.env.REACT_APP_API_URL || "http://localhost:8000/api";
   const profileGamesPlayed = Number(profile?.gameStats?.gamesPlayed || 0);
-  const profileDailyLimit = profile?.withdrawalPolicy
-    ? profile.withdrawalPolicy.dailyLimitBirr
-    : getDailyWithdrawalLimit(profileGamesPlayed);
 
   useEffect(() => {
     if (user && user.id) {
@@ -784,14 +780,6 @@ function MainPage() {
               <div style={styles.profileStat}>
                 <span style={styles.profileStatLabel}>{t("gamesPlayed")}</span>
                 <span style={styles.profileStatValue}>{profileGamesPlayed}</span>
-              </div>
-              <div style={{ ...styles.profileStat, gridColumn: "1 / -1" }}>
-                <span style={styles.profileStatLabel}>{t("dailyWithdrawalLimit")}</span>
-                <span style={styles.profileStatValue}>
-                  {profileDailyLimit === null
-                    ? t("unlimited")
-                    : <CoinAmount value={profileDailyLimit} />}
-                </span>
               </div>
               <div style={styles.profileStat}>
                 <span style={styles.profileStatLabel}>{t("amountPlayed")}</span>

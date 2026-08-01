@@ -203,7 +203,7 @@ textarea:focus {
   box-sizing: border-box;
 }
 
-/* The deposit flow is intentionally a single, non-scrolling viewport. */
+/* Let the full deposit flow scroll on compact Telegram viewports. */
 .deposit-card {
   display: flex;
   flex-direction: column;
@@ -307,11 +307,6 @@ textarea:focus {
     max-height: 76px !important;
   }
 
-  .deposit-checkbox {
-    margin-bottom: 7px !important;
-    font-size: 0.75rem !important;
-  }
-
   .deposit-card .money-actions button {
     padding: 7px 9px !important;
     font-size: 0.8rem !important;
@@ -328,10 +323,6 @@ textarea:focus {
   .deposit-page {
     padding-top: 70px !important;
     padding-bottom: 8px !important;
-  }
-
-  .deposit-card {
-    max-height: calc(100dvh - 78px) !important;
   }
 
   .deposit-steps {
